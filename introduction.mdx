@@ -1,0 +1,127 @@
+---
+title: "Introduction to CockroachDB"
+description: "A cloud-native distributed SQL database designed to build, scale, and manage modern, data-intensive applications"
+---
+
+<img
+  src="/images/cockroach_db.png"
+  alt="CockroachDB"
+/>
+
+## What is CockroachDB?
+
+CockroachDB is a **distributed SQL database** built on a transactional and strongly-consistent key-value store. It combines the familiarity of SQL with the scale and resilience of NoSQL systems.
+
+<CardGroup cols={2}>
+  <Card title="Horizontal Scalability" icon="arrows-left-right">
+    Scales horizontally by adding nodes to the cluster, supporting up to 4 exabytes of logical data
+  </Card>
+  <Card title="High Availability" icon="shield-check">
+    Survives disk, machine, rack, and datacenter failures with minimal latency disruption and no manual intervention
+  </Card>
+  <Card title="Strong Consistency" icon="lock">
+    Provides strongly-consistent ACID transactions using distributed consensus (Raft)
+  </Card>
+  <Card title="SQL Interface" icon="database">
+    Familiar SQL API for structuring, manipulating, and querying data with PostgreSQL compatibility
+  </Card>
+</CardGroup>
+
+## Core Features
+
+### Distributed Architecture
+
+CockroachDB implements a layered architecture where:
+
+- **SQL Layer**: Provides familiar relational concepts like schemas, tables, columns, and indexes
+- **Distributed KV Store**: Handles range addressing to provide a single, monolithic key-value store abstraction
+- **Raft Consensus**: Ensures data replication and consistency across nodes
+- **Storage Engine**: Uses RocksDB (a variant of LevelDB) for local storage
+
+<Tip>
+Every node in a CockroachDB cluster is symmetric - any node can act as a SQL gateway, making the cluster truly decentralized.
+</Tip>
+
+### How It Works
+
+The database is logically a single, monolithic sorted map from key to value. Internally, this map is divided into **ranges** (default 64MB each):
+
+1. Each range is replicated to a configurable number of nodes (default: 3)
+2. Ranges use the **Raft consensus algorithm** for synchronous replication
+3. Ranges automatically split and merge to maintain optimal size
+4. Data is automatically rebalanced across the cluster
+
+### Transaction Guarantees
+
+CockroachDB provides two isolation levels:
+
+- **Serializable Snapshot Isolation (SSI)**: The default, provides full serializability with no anomalies
+- **Snapshot Isolation (SI)**: Higher performance but allows write skew in rare cases
+
+<Note>
+CockroachDB uses a non-locking distributed commit protocol and hybrid logical clocks (HLC) to maintain consistency without atomic clocks.
+</Note>
+
+## Key Design Goals
+
+CockroachDB was built with three primary goals:
+
+<Steps>
+  <Step title="Scalability">
+    Horizontal scaling by adding more nodes increases both capacity and throughput linearly
+  </Step>
+  <Step title="Strong Consistency">
+    All operations maintain ACID guarantees across distributed transactions
+  </Step>
+  <Step title="Survivability">
+    Tolerates datacenter failures with minimal latency disruption and zero manual intervention
+  </Step>
+</Steps>
+
+## Use Cases
+
+CockroachDB excels at:
+
+- **Cloud-native applications** requiring global distribution
+- **Multi-region deployments** with data locality requirements
+- **Mission-critical systems** that cannot tolerate downtime
+- **Applications migrating from PostgreSQL** (wire protocol compatible)
+- **High-scale OLTP workloads** with strong consistency needs
+
+## Get Started
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Get CockroachDB running in minutes with our step-by-step tutorial
+  </Card>
+  <Card title="Installation" icon="download" href="/installation">
+    Install CockroachDB on your preferred platform
+  </Card>
+  <Card title="Architecture Guide" icon="sitemap" href="https://www.cockroachlabs.com/docs/stable/architecture/overview.html">
+    Deep dive into how CockroachDB works internally
+  </Card>
+  <Card title="SQL Reference" icon="book" href="https://www.cockroachlabs.com/docs/stable/sql-statements.html">
+    Learn about supported SQL statements and syntax
+  </Card>
+</CardGroup>
+
+## PostgreSQL Compatibility
+
+CockroachDB supports the **PostgreSQL wire protocol**, which means:
+
+- You can use existing PostgreSQL client drivers
+- Most PostgreSQL applications work with minimal changes
+- Standard ORMs (Hibernate, Django, ActiveRecord) are supported
+- SQL syntax is largely compatible with PostgreSQL
+
+<Warning>
+While highly compatible, some PostgreSQL features are not supported. Check the [SQL Feature Support](https://www.cockroachlabs.com/docs/stable/sql-feature-support.html) documentation for details.
+</Warning>
+
+## Next Steps
+
+Ready to get started?
+
+1. Follow the [Quick Start Guide](/quickstart) to run your first cluster
+2. Review [Installation Options](/installation) for production deployments
+3. Explore the [official documentation](https://www.cockroachlabs.com/docs/stable/) for in-depth guides

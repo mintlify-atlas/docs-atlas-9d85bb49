@@ -1,0 +1,354 @@
+---
+title: Performance Optimization
+description: Strategies and best practices for optimizing CockroachDB performance
+---
+
+## Overview
+
+CockroachDB is designed for horizontal scalability and high availability. This guide covers optimization strategies across schema design, query patterns, and cluster configuration to maximize performance.
+
+## Schema Design Optimization
+
+### Primary Key Selection
+
+Choosing the right primary key is critical for write performance and data distribution.
+
+<Tip>
+Avoid using sequential IDs (like auto-incrementing integers) as primary keys in high-write tables, as they create hotspots on a single range.
+</Tip>
+
+```sql
+-- Problematic: Sequential primary key creates hotspots
+CREATE TABLE orders (
+  id INT PRIMARY KEY,
+  customer_id UUID,
+  created_at TIMESTAMP
+);
+
+-- Better: Use UUID or hash-sharded keys
+CREATE TABLE orders (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  customer_id UUID,
+  created_at TIMESTAMP
+);
+
+-- Alternative: Hash-sharded primary key
+CREATE TABLE orders (
+  id INT PRIMARY KEY USING HASH WITH (bucket_count = 16),
+  customer_id UUID,
+  created_at TIMESTAMP
+);
+```
+
+### Index Strategy
+
+Indexes accelerate reads but add overhead to writes. Design indexes carefully based on query patterns.
+
+<Steps>
+  <Step title="Analyze query patterns">
+    Identify frequently used WHERE clauses, JOIN conditions, and ORDER BY clauses.
+  </Step>
+  
+  <Step title="Create covering indexes">
+    Include all columns needed by a query to avoid table lookups.
+  </Step>
+  
+  <Step title="Use partial indexes">
+    Index only relevant rows to reduce index size and maintenance cost.
+  </Step>
+  
+  <Step title="Monitor index usage">
+    Remove unused indexes that consume resources without providing benefit.
+  </Step>
+</Steps>
+
+```sql
+-- Covering index includes all columns needed by query
+CREATE INDEX idx_customer_orders ON orders (customer_id, created_at) 
+  STORING (total_amount, status);
+
+-- Partial index for active orders only
+CREATE INDEX idx_active_orders ON orders (created_at) 
+  WHERE status = 'active';
+
+-- Multi-column index for composite queries
+CREATE INDEX idx_order_search ON orders (status, created_at DESC, customer_id);
+```
+
+### Column Families
+
+Group frequently accessed columns together to reduce I/O.
+
+```sql
+CREATE TABLE products (
+  id UUID PRIMARY KEY,
+  name STRING,
+  description TEXT,
+  metadata JSONB,
+  price DECIMAL,
+  stock_count INT,
+  
+  -- Frequently accessed columns in default family
+  FAMILY primary (id, name, price, stock_count),
+  
+  -- Large, infrequently accessed columns in separate family
+  FAMILY details (description, metadata)
+);
+```
+
+## Query Optimization
+
+### Cost-Based Optimizer
+
+CockroachDB uses a cost-based optimizer that considers:
+- Table and index statistics
+- Estimated row counts
+- CPU and I/O costs
+- Network distribution costs
+
+<Note>
+The optimizer relies on table statistics. Keep statistics up-to-date by running `CREATE STATISTICS` or enabling automatic statistics collection.
+</Note>
+
+```sql
+-- Create table statistics manually
+CREATE STATISTICS stats_orders FROM orders;
+
+-- Create statistics on specific columns
+CREATE STATISTICS stats_customer_orders ON customer_id, created_at FROM orders;
+
+-- Enable automatic statistics (default)
+SET CLUSTER SETTING sql.stats.automatic_collection.enabled = true;
+```
+
+### Batch Operations
+
+Batch multiple operations to reduce round trips and transaction overhead.
+
+<CodeGroup>
+```sql Batched Inserts
+-- Instead of individual inserts
+INSERT INTO orders (id, customer_id, total) VALUES (uuid_generate_v4(), 'cust1', 100);
+INSERT INTO orders (id, customer_id, total) VALUES (uuid_generate_v4(), 'cust2', 200);
+
+-- Use multi-row insert
+INSERT INTO orders (id, customer_id, total) VALUES
+  (uuid_generate_v4(), 'cust1', 100),
+  (uuid_generate_v4(), 'cust2', 200),
+  (uuid_generate_v4(), 'cust3', 300);
+```
+
+```sql Batched Updates
+-- Update multiple rows in a single statement
+UPDATE orders 
+SET status = 'shipped' 
+WHERE id = ANY(ARRAY['id1', 'id2', 'id3']);
+
+-- Use UPSERT for insert-or-update scenarios
+UPSERT INTO inventory (product_id, quantity) VALUES
+  ('prod1', 100),
+  ('prod2', 200);
+```
+</CodeGroup>
+
+### JOIN Optimization
+
+Choose the right JOIN type and order for optimal performance.
+
+```sql
+-- Ensure joined columns are indexed
+CREATE INDEX idx_order_customer ON orders (customer_id);
+
+-- Use INNER JOIN when possible (more efficient than OUTER JOIN)
+SELECT o.id, o.total, c.name
+FROM orders o
+INNER JOIN customers c ON o.customer_id = c.id
+WHERE o.created_at > NOW() - INTERVAL '1 day';
+
+-- For small lookup tables, consider LOOKUP JOIN hint
+SELECT o.id, o.total, c.name
+FROM orders o
+INNER LOOKUP JOIN customers c ON o.customer_id = c.id;
+```
+
+## Transaction Performance
+
+### Transaction Size
+
+Keep transactions small and focused to reduce contention.
+
+<Warning>
+Large transactions increase the likelihood of conflicts and retries. Break large operations into smaller batches.
+</Warning>
+
+```sql
+-- Instead of one large transaction
+BEGIN;
+  UPDATE accounts SET balance = balance - 1 WHERE id IN (SELECT id FROM accounts LIMIT 10000);
+COMMIT;
+
+-- Use smaller batches
+BEGIN;
+  UPDATE accounts SET balance = balance - 1 WHERE id IN (SELECT id FROM accounts LIMIT 100);
+COMMIT;
+-- Repeat in loop
+```
+
+### Transaction Priorities
+
+Set transaction priority for critical operations.
+
+```sql
+-- High priority for critical transactions
+BEGIN PRIORITY HIGH;
+  UPDATE inventory SET quantity = quantity - 1 WHERE product_id = 'critical_product';
+COMMIT;
+
+-- Low priority for background jobs
+BEGIN PRIORITY LOW;
+  DELETE FROM logs WHERE created_at < NOW() - INTERVAL '90 days';
+COMMIT;
+```
+
+### SELECT FOR UPDATE
+
+Use `SELECT FOR UPDATE` to lock rows and prevent conflicts in read-modify-write patterns.
+
+```sql
+BEGIN;
+  -- Lock the row to prevent concurrent modifications
+  SELECT balance FROM accounts WHERE id = 'acc123' FOR UPDATE;
+  
+  -- Perform business logic
+  UPDATE accounts SET balance = balance - 100 WHERE id = 'acc123';
+COMMIT;
+```
+
+## Distribution and Replication
+
+### Range Splits
+
+Split large tables to distribute load across nodes.
+
+```sql
+-- Split table at specific key values
+ALTER TABLE orders SPLIT AT VALUES ('2024-01-01'), ('2024-02-01'), ('2024-03-01');
+
+-- View current splits
+SHOW RANGES FROM TABLE orders;
+
+-- Scatter ranges to distribute across cluster
+ALTER TABLE orders SCATTER;
+```
+
+### Follower Reads
+
+Enable follower reads for queries that can tolerate slightly stale data.
+
+```sql
+-- Use follower reads for analytics queries
+SET TRANSACTION AS OF SYSTEM TIME follower_read_timestamp();
+SELECT COUNT(*) FROM orders WHERE created_at > NOW() - INTERVAL '7 days';
+```
+
+### Locality-Optimized Search
+
+Use regional tables and indexes for multi-region deployments.
+
+```sql
+-- Regional by row table
+ALTER TABLE orders SET LOCALITY REGIONAL BY ROW AS region;
+
+-- Create regional index
+CREATE INDEX idx_regional_orders ON orders (customer_id) 
+  WHERE region = 'us-east';
+```
+
+## Connection Pooling
+
+Use connection pooling to reduce connection overhead.
+
+<CodeGroup>
+```go Go
+import (
+    "database/sql"
+    _ "github.com/lib/pq"
+)
+
+db, err := sql.Open("postgres", connString)
+if err != nil {
+    log.Fatal(err)
+}
+
+// Configure connection pool
+db.SetMaxOpenConns(25)
+db.SetMaxIdleConns(25)
+db.SetConnMaxLifetime(5 * time.Minute)
+```
+
+```python Python
+from sqlalchemy import create_engine
+
+engine = create_engine(
+    'cockroachdb://user:pass@host:26257/db',
+    pool_size=20,
+    max_overflow=0,
+    pool_pre_ping=True
+)
+```
+
+```javascript Node.js
+const { Pool } = require('pg');
+
+const pool = new Pool({
+  connectionString: 'postgresql://user:pass@host:26257/db',
+  max: 20,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 2000,
+});
+```
+</CodeGroup>
+
+## Monitoring and Metrics
+
+### Key Performance Indicators
+
+Monitor these metrics to identify performance issues:
+
+- **Query latency**: P50, P95, P99 latencies
+- **Throughput**: Queries per second (QPS)
+- **Transaction conflicts**: Retry rate
+- **Replication lag**: Cross-region latency
+- **CPU and memory**: Resource utilization
+- **Disk I/O**: Read/write IOPS
+
+```sql
+-- View slow queries
+SELECT query, count, mean_latency 
+FROM crdb_internal.node_statement_statistics 
+WHERE mean_latency > INTERVAL '1 second'
+ORDER BY mean_latency DESC 
+LIMIT 10;
+
+-- View transaction statistics
+SELECT * FROM crdb_internal.node_txn_stats 
+ORDER BY service_latency DESC 
+LIMIT 10;
+```
+
+## Best Practices Summary
+
+<Tip>
+**Quick wins for better performance:**
+
+1. Use hash-sharded or UUID primary keys for high-write tables
+2. Create covering indexes for frequent queries
+3. Keep transactions small and focused
+4. Enable automatic statistics collection
+5. Use connection pooling
+6. Batch insert/update operations
+7. Split and scatter large tables
+8. Use follower reads for analytics
+9. Monitor query performance regularly
+10. Keep CockroachDB version up-to-date
+</Tip>

@@ -1,0 +1,664 @@
+---
+title: Built-in SQL Functions
+description: Comprehensive reference for built-in SQL functions in CockroachDB
+---
+
+CockroachDB provides a rich set of built-in SQL functions for data manipulation, transformation, and analysis. This page documents all major function categories with examples.
+
+## Function Categories
+
+Functions are organized into the following categories:
+
+- **String Functions** - Text manipulation and formatting
+- **Numeric Functions** - Mathematical operations
+- **Date/Time Functions** - Temporal data operations
+- **Aggregate Functions** - Data summarization
+- **JSON Functions** - JSON data manipulation
+- **Array Functions** - Array operations
+- **Conditional Functions** - Logical expressions
+- **System Functions** - Database metadata and info
+
+## String Functions
+
+### String Manipulation
+
+<Tabs>
+  <Tab title="Concatenation">
+    ```sql
+    -- CONCAT function
+    SELECT CONCAT('Hello', ' ', 'World');
+    -- Result: 'Hello World'
+    
+    -- || operator
+    SELECT 'Hello' || ' ' || 'World';
+    -- Result: 'Hello World'
+    
+    -- CONCAT_WS (with separator)
+    SELECT CONCAT_WS(', ', 'Alice', 'Bob', 'Charlie');
+    -- Result: 'Alice, Bob, Charlie'
+    ```
+  </Tab>
+  
+  <Tab title="Case Conversion">
+    ```sql
+    SELECT UPPER('hello world');
+    -- Result: 'HELLO WORLD'
+    
+    SELECT LOWER('HELLO WORLD');
+    -- Result: 'hello world'
+    
+    SELECT INITCAP('hello world');
+    -- Result: 'Hello World'
+    ```
+  </Tab>
+  
+  <Tab title="Substring">
+    ```sql
+    -- SUBSTRING function
+    SELECT SUBSTRING('CockroachDB', 1, 4);
+    -- Result: 'Cock'
+    
+    -- LEFT and RIGHT
+    SELECT LEFT('CockroachDB', 4);
+    -- Result: 'Cock'
+    
+    SELECT RIGHT('CockroachDB', 2);
+    -- Result: 'DB'
+    
+    -- SUBSTR (alias)
+    SELECT SUBSTR('CockroachDB', 5, 5);
+    -- Result: 'roach'
+    ```
+  </Tab>
+  
+  <Tab title="Trimming">
+    ```sql
+    SELECT TRIM('  hello  ');
+    -- Result: 'hello'
+    
+    SELECT LTRIM('  hello');
+    -- Result: 'hello'
+    
+    SELECT RTRIM('hello  ');
+    -- Result: 'hello'
+    
+    -- Trim specific characters
+    SELECT TRIM(BOTH 'x' FROM 'xxxhelloxxx');
+    -- Result: 'hello'
+    ```
+  </Tab>
+</Tabs>
+
+### String Information
+
+<CodeGroup>
+```sql Length Functions
+SELECT LENGTH('CockroachDB');
+-- Result: 11
+
+SELECT CHAR_LENGTH('CockroachDB');
+-- Result: 11
+
+SELECT OCTET_LENGTH('CockroachDB');
+-- Result: 11 (byte length)
+```
+
+```sql Position and Search
+SELECT POSITION('roach' IN 'CockroachDB');
+-- Result: 5
+
+SELECT STRPOS('CockroachDB', 'roach');
+-- Result: 5
+```
+</CodeGroup>
+
+### String Formatting
+
+```sql
+-- LPAD and RPAD
+SELECT LPAD('123', 5, '0');
+-- Result: '00123'
+
+SELECT RPAD('abc', 5, 'x');
+-- Result: 'abcxx'
+
+-- REPEAT
+SELECT REPEAT('*', 5);
+-- Result: '*****'
+
+-- REVERSE
+SELECT REVERSE('CockroachDB');
+-- Result: 'BDhcaoركcoC'
+
+-- REPLACE
+SELECT REPLACE('Hello World', 'World', 'CockroachDB');
+-- Result: 'Hello CockroachDB'
+
+-- TRANSLATE
+SELECT TRANSLATE('hello', 'el', 'XY');
+-- Result: 'hXYYo'
+```
+
+### Pattern Matching
+
+<CodeGroup>
+```sql Regular Expressions
+-- Test if matches
+SELECT 'hello123' ~ '[a-z]+[0-9]+';
+-- Result: true
+
+-- Case-insensitive match
+SELECT 'HELLO' ~* 'hello';
+-- Result: true
+
+-- Extract matching substring
+SELECT SUBSTRING('email: user@example.com' FROM '[a-z]+@[a-z]+\.[a-z]+');
+-- Result: 'user@example.com'
+
+-- REGEXP_REPLACE
+SELECT REGEXP_REPLACE('Hello 123 World 456', '[0-9]+', 'X', 'g');
+-- Result: 'Hello X World X'
+```
+
+```sql LIKE Patterns
+SELECT * FROM users WHERE email LIKE '%@example.com';
+
+SELECT * FROM users WHERE name ILIKE 'john%';
+```
+</CodeGroup>
+
+<Note>
+Regex flags: `c` = case-sensitive, `i` = case-insensitive, `g` = global, `m` = multiline, `n` = newline-sensitive
+</Note>
+
+## Numeric Functions
+
+### Mathematical Operations
+
+<Tabs>
+  <Tab title="Basic Math">
+    ```sql
+    SELECT ABS(-42);
+    -- Result: 42
+    
+    SELECT CEIL(3.14);
+    -- Result: 4
+    
+    SELECT FLOOR(3.14);
+    -- Result: 3
+    
+    SELECT ROUND(3.14159, 2);
+    -- Result: 3.14
+    
+    SELECT TRUNC(3.14159, 2);
+    -- Result: 3.14
+    
+    SELECT MOD(10, 3);
+    -- Result: 1
+    ```
+  </Tab>
+  
+  <Tab title="Power & Roots">
+    ```sql
+    SELECT POWER(2, 10);
+    -- Result: 1024
+    
+    SELECT SQRT(16);
+    -- Result: 4
+    
+    SELECT CBRT(27);
+    -- Result: 3 (cube root)
+    
+    SELECT EXP(1);
+    -- Result: 2.718281828459045 (e^1)
+    
+    SELECT LN(2.718281828459045);
+    -- Result: 1 (natural log)
+    
+    SELECT LOG(100);
+    -- Result: 2 (log base 10)
+    ```
+  </Tab>
+  
+  <Tab title="Trigonometry">
+    ```sql
+    SELECT SIN(0);
+    -- Result: 0
+    
+    SELECT COS(0);
+    -- Result: 1
+    
+    SELECT TAN(PI()/4);
+    -- Result: 1
+    
+    SELECT ASIN(0.5);
+    SELECT ACOS(0.5);
+    SELECT ATAN(1);
+    -- Inverse trig functions
+    ```
+  </Tab>
+  
+  <Tab title="Random & Constants">
+    ```sql
+    SELECT RANDOM();
+    -- Result: random float [0, 1)
+    
+    SELECT PI();
+    -- Result: 3.141592653589793
+    
+    SELECT SIGN(-42);
+    -- Result: -1
+    
+    SELECT SIGN(0);
+    -- Result: 0
+    
+    SELECT SIGN(42);
+    -- Result: 1
+    ```
+  </Tab>
+</Tabs>
+
+### Bitwise Operations
+
+```sql
+-- Bitwise AND, OR, XOR
+SELECT 12 & 10;  -- Result: 8
+SELECT 12 | 10;  -- Result: 14
+SELECT 12 # 10;  -- Result: 6
+
+-- Bitwise NOT
+SELECT ~5;
+
+-- Shift operations
+SELECT 8 << 2;   -- Result: 32 (left shift)
+SELECT 8 >> 2;   -- Result: 2 (right shift)
+```
+
+## Date and Time Functions
+
+### Current Date/Time
+
+<CodeGroup>
+```sql Current Values
+SELECT CURRENT_DATE;
+-- Result: '2026-03-03'
+
+SELECT CURRENT_TIME;
+-- Result: '10:30:45.123456-05:00'
+
+SELECT CURRENT_TIMESTAMP;
+-- Result: '2026-03-03 10:30:45.123456-05:00'
+
+SELECT NOW();
+-- Result: '2026-03-03 10:30:45.123456-05:00'
+
+SELECT CLOCK_TIMESTAMP();
+-- Current time (changes during statement execution)
+```
+
+```sql Statement Time
+SELECT STATEMENT_TIMESTAMP();
+-- Timestamp at start of current statement
+
+SELECT TRANSACTION_TIMESTAMP();
+-- Timestamp at start of current transaction
+```
+</CodeGroup>
+
+### Date/Time Extraction
+
+<Tabs>
+  <Tab title="EXTRACT">
+    ```sql
+    SELECT EXTRACT(YEAR FROM TIMESTAMP '2026-03-03 10:30:45');
+    -- Result: 2026
+    
+    SELECT EXTRACT(MONTH FROM TIMESTAMP '2026-03-03 10:30:45');
+    -- Result: 3
+    
+    SELECT EXTRACT(DAY FROM TIMESTAMP '2026-03-03 10:30:45');
+    -- Result: 3
+    
+    SELECT EXTRACT(HOUR FROM TIMESTAMP '2026-03-03 10:30:45');
+    -- Result: 10
+    
+    SELECT EXTRACT(DOW FROM DATE '2026-03-03');
+    -- Result: 2 (day of week, 0=Sunday)
+    
+    SELECT EXTRACT(EPOCH FROM TIMESTAMP '2026-03-03 10:30:45');
+    -- Result: Unix timestamp
+    ```
+  </Tab>
+  
+  <Tab title="Date Parts">
+    ```sql
+    SELECT DATE_PART('year', TIMESTAMP '2026-03-03 10:30:45');
+    -- Result: 2026
+    
+    SELECT DATE_PART('quarter', DATE '2026-03-03');
+    -- Result: 1
+    
+    SELECT DATE_PART('week', DATE '2026-03-03');
+    -- Result: week number
+    ```
+  </Tab>
+  
+  <Tab title="Individual Functions">
+    ```sql
+    SELECT DATE_TRUNC('month', TIMESTAMP '2026-03-15 10:30:45');
+    -- Result: '2026-03-01 00:00:00'
+    
+    SELECT DATE_TRUNC('hour', TIMESTAMP '2026-03-03 10:30:45');
+    -- Result: '2026-03-03 10:00:00'
+    
+    SELECT AGE(TIMESTAMP '2026-03-03', TIMESTAMP '2025-01-01');
+    -- Result: '1 year 2 months 2 days'
+    ```
+  </Tab>
+</Tabs>
+
+### Date/Time Arithmetic
+
+```sql
+-- Add interval
+SELECT DATE '2026-03-03' + INTERVAL '7 days';
+-- Result: '2026-03-10'
+
+SELECT TIMESTAMP '2026-03-03 10:00:00' + INTERVAL '2 hours';
+-- Result: '2026-03-03 12:00:00'
+
+-- Subtract interval
+SELECT TIMESTAMP '2026-03-03 10:00:00' - INTERVAL '30 minutes';
+-- Result: '2026-03-03 09:30:00'
+
+-- Difference between timestamps
+SELECT TIMESTAMP '2026-03-03 12:00:00' - TIMESTAMP '2026-03-03 10:00:00';
+-- Result: '2 hours'
+
+-- Generate series of dates
+SELECT * FROM GENERATE_SERIES(
+  '2026-03-01'::TIMESTAMP,
+  '2026-03-07'::TIMESTAMP,
+  '1 day'::INTERVAL
+);
+```
+
+### Formatting
+
+<CodeGroup>
+```sql TO_CHAR
+SELECT TO_CHAR(CURRENT_TIMESTAMP, 'YYYY-MM-DD HH24:MI:SS');
+-- Result: '2026-03-03 10:30:45'
+
+SELECT TO_CHAR(DATE '2026-03-03', 'Day, Month DD, YYYY');
+-- Result: 'Tuesday, March 03, 2026'
+```
+
+```sql TO_TIMESTAMP
+SELECT TO_TIMESTAMP('2026-03-03 10:30:45', 'YYYY-MM-DD HH24:MI:SS');
+
+SELECT TO_DATE('03/03/2026', 'MM/DD/YYYY');
+```
+</CodeGroup>
+
+## Aggregate Functions
+
+Aggregate functions compute single results from sets of rows.
+
+<Tabs>
+  <Tab title="Common Aggregates">
+    ```sql
+    -- COUNT
+    SELECT COUNT(*) FROM users;
+    SELECT COUNT(DISTINCT email) FROM users;
+    
+    -- SUM
+    SELECT SUM(total) FROM orders;
+    
+    -- AVG
+    SELECT AVG(price) FROM products;
+    
+    -- MIN and MAX
+    SELECT MIN(created_at), MAX(created_at) FROM users;
+    ```
+  </Tab>
+  
+  <Tab title="Statistical">
+    ```sql
+    -- Standard deviation
+    SELECT STDDEV(price) FROM products;
+    SELECT STDDEV_POP(price) FROM products;
+    SELECT STDDEV_SAMP(price) FROM products;
+    
+    -- Variance
+    SELECT VARIANCE(price) FROM products;
+    SELECT VAR_POP(price) FROM products;
+    SELECT VAR_SAMP(price) FROM products;
+    ```
+  </Tab>
+  
+  <Tab title="String Aggregation">
+    ```sql
+    -- STRING_AGG
+    SELECT STRING_AGG(name, ', ') FROM users;
+    -- Result: 'Alice, Bob, Charlie'
+    
+    SELECT STRING_AGG(name, ', ' ORDER BY name) 
+    FROM users;
+    
+    -- ARRAY_AGG
+    SELECT ARRAY_AGG(name ORDER BY name) FROM users;
+    -- Result: ['Alice', 'Bob', 'Charlie']
+    ```
+  </Tab>
+  
+  <Tab title="JSON Aggregation">
+    ```sql
+    -- JSON_AGG
+    SELECT JSON_AGG(name) FROM users;
+    -- Result: ["Alice", "Bob", "Charlie"]
+    
+    -- JSONB_OBJECT_AGG
+    SELECT JSONB_OBJECT_AGG(id, name) FROM users;
+    -- Result: {"1": "Alice", "2": "Bob"}
+    ```
+  </Tab>
+</Tabs>
+
+## JSON Functions
+
+### JSON Operators
+
+<CodeGroup>
+```sql Access Operators
+-- -> returns JSON
+SELECT '{"name": "Alice", "age": 30}'::JSONB -> 'name';
+-- Result: "Alice"
+
+-- ->> returns text
+SELECT '{"name": "Alice", "age": 30}'::JSONB ->> 'name';
+-- Result: Alice
+
+-- Array access
+SELECT '[1, 2, 3]'::JSONB -> 1;
+-- Result: 2
+
+-- Path access
+SELECT '{"user": {"name": "Alice"}}'::JSONB #> '{user,name}';
+-- Result: "Alice"
+```
+
+```sql Containment
+-- @> (contains)
+SELECT '{"a": 1, "b": 2}'::JSONB @> '{"a": 1}'::JSONB;
+-- Result: true
+
+-- <@ (contained by)
+SELECT '{"a": 1}'::JSONB <@ '{"a": 1, "b": 2}'::JSONB;
+-- Result: true
+
+-- ? (key exists)
+SELECT '{"a": 1, "b": 2}'::JSONB ? 'a';
+-- Result: true
+```
+</CodeGroup>
+
+### JSON Functions
+
+```sql
+-- JSONB_BUILD_OBJECT
+SELECT JSONB_BUILD_OBJECT('name', 'Alice', 'age', 30);
+-- Result: {"name": "Alice", "age": 30}
+
+-- JSONB_BUILD_ARRAY
+SELECT JSONB_BUILD_ARRAY(1, 2, 3, 'four');
+-- Result: [1, 2, 3, "four"]
+
+-- JSONB_ARRAY_LENGTH
+SELECT JSONB_ARRAY_LENGTH('[1, 2, 3]'::JSONB);
+-- Result: 3
+
+-- JSONB_EACH
+SELECT * FROM JSONB_EACH('{"a": 1, "b": 2}'::JSONB);
+-- Returns rows: (a, 1), (b, 2)
+
+-- JSONB_STRIP_NULLS
+SELECT JSONB_STRIP_NULLS('{"a": 1, "b": null}'::JSONB);
+-- Result: {"a": 1}
+
+-- JSONB_SET
+SELECT JSONB_SET(
+  '{"name": "Alice"}'::JSONB,
+  '{age}',
+  '30'::JSONB
+);
+-- Result: {"name": "Alice", "age": 30}
+```
+
+## Array Functions
+
+```sql
+-- ARRAY_LENGTH
+SELECT ARRAY_LENGTH(ARRAY[1, 2, 3], 1);
+-- Result: 3
+
+-- ARRAY_APPEND
+SELECT ARRAY_APPEND(ARRAY[1, 2], 3);
+-- Result: {1, 2, 3}
+
+-- ARRAY_PREPEND
+SELECT ARRAY_PREPEND(0, ARRAY[1, 2, 3]);
+-- Result: {0, 1, 2, 3}
+
+-- ARRAY_CAT (concatenate)
+SELECT ARRAY_CAT(ARRAY[1, 2], ARRAY[3, 4]);
+-- Result: {1, 2, 3, 4}
+
+-- ARRAY_POSITION
+SELECT ARRAY_POSITION(ARRAY['a', 'b', 'c'], 'b');
+-- Result: 2
+
+-- UNNEST (expand to rows)
+SELECT UNNEST(ARRAY[1, 2, 3]);
+-- Returns 3 rows: 1, 2, 3
+```
+
+## Conditional Functions
+
+<CodeGroup>
+```sql CASE Expression
+SELECT 
+  name,
+  CASE 
+    WHEN age < 18 THEN 'Minor'
+    WHEN age < 65 THEN 'Adult'
+    ELSE 'Senior'
+  END AS age_group
+FROM users;
+```
+
+```sql COALESCE
+SELECT COALESCE(NULL, NULL, 'default', 'other');
+-- Result: 'default'
+
+SELECT COALESCE(middle_name, '') FROM users;
+```
+
+```sql NULLIF
+SELECT NULLIF(value, 0) FROM data;
+-- Returns NULL if value = 0
+```
+
+```sql GREATEST/LEAST
+SELECT GREATEST(1, 5, 3, 9, 2);
+-- Result: 9
+
+SELECT LEAST(1, 5, 3, 9, 2);
+-- Result: 1
+```
+</CodeGroup>
+
+## System and Metadata Functions
+
+```sql
+-- Database information
+SELECT CURRENT_DATABASE();
+SELECT CURRENT_SCHEMA();
+SELECT CURRENT_USER;
+SELECT SESSION_USER;
+
+-- Version information
+SELECT VERSION();
+SELECT CRDB_INTERNAL.NODE_ID();
+
+-- UUID generation
+SELECT GEN_RANDOM_UUID();
+
+-- Type conversion
+SELECT CAST('123' AS INT);
+SELECT '123'::INT;
+
+-- Encoding/Decoding
+SELECT ENCODE('hello', 'base64');
+SELECT DECODE('aGVsbG8=', 'base64');
+```
+
+## Window Functions
+
+```sql
+-- ROW_NUMBER
+SELECT 
+  name,
+  ROW_NUMBER() OVER (ORDER BY created_at) AS row_num
+FROM users;
+
+-- RANK and DENSE_RANK
+SELECT 
+  name,
+  score,
+  RANK() OVER (ORDER BY score DESC) AS rank,
+  DENSE_RANK() OVER (ORDER BY score DESC) AS dense_rank
+FROM scores;
+
+-- LAG and LEAD
+SELECT 
+  date,
+  value,
+  LAG(value) OVER (ORDER BY date) AS prev_value,
+  LEAD(value) OVER (ORDER BY date) AS next_value
+FROM metrics;
+
+-- Aggregate window functions
+SELECT 
+  name,
+  department,
+  salary,
+  AVG(salary) OVER (PARTITION BY department) AS dept_avg
+FROM employees;
+```
+
+## See Also
+
+- [Data Types](/sql/data-types) - Supported SQL data types
+- [Statements](/sql/statements) - SQL statement reference
+- [Operators](https://www.cockroachlabs.com/docs/stable/functions-and-operators) - SQL operators

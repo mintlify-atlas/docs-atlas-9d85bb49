@@ -1,0 +1,335 @@
+---
+title: Scaling CockroachDB Clusters
+description: Scale your CockroachDB cluster horizontally by adding or removing nodes
+---
+
+CockroachDB is designed to scale horizontally by adding more nodes to your cluster. The database automatically rebalances data across nodes to maintain optimal performance and fault tolerance.
+
+## Horizontal Scaling
+
+CockroachDB scales horizontally, meaning you add more nodes rather than upgrading existing hardware. This approach provides:
+
+<CardGroup cols={2}>
+  <Card title="Linear Scalability" icon="arrow-up-right-dots">
+    Performance scales nearly linearly with the number of nodes
+  </Card>
+  <Card title="Automatic Rebalancing" icon="scale-balanced">
+    Data automatically redistributes across all nodes
+  </Card>
+  <Card title="No Downtime" icon="circle-check">
+    Add or remove nodes without interrupting service
+  </Card>
+  <Card title="Increased Capacity" icon="database">
+    Distribute storage and compute across more resources
+  </Card>
+</CardGroup>
+
+## Adding Nodes to a Cluster
+
+### Manual Node Addition
+
+<Steps>
+  <Step title="Prepare the New Node">
+    Install CockroachDB on the new machine and ensure it can communicate with existing nodes on port 26257.
+  </Step>
+
+  <Step title="Copy Security Certificates">
+    If running in secure mode, copy the CA certificate and create node certificates:
+    
+    ```bash
+    # On the new node
+    mkdir certs my-safe-directory
+    
+    # Copy CA certificate from existing node
+    scp user@existing-node:/path/to/certs/ca.crt certs/
+    scp user@existing-node:/path/to/certs/ca.key my-safe-directory/
+    
+    # Create node certificate
+    cockroach cert create-node \
+      <new-node-address> \
+      localhost \
+      127.0.0.1 \
+      --certs-dir=certs \
+      --ca-key=my-safe-directory/ca.key
+    ```
+  </Step>
+
+  <Step title="Start the New Node">
+    ```bash
+    cockroach start \
+      --certs-dir=certs \
+      --advertise-addr=<new-node-address> \
+      --join=<existing-node1>,<existing-node2>,<existing-node3> \
+      --cache=.25 \
+      --max-sql-memory=.25 \
+      --background
+    ```
+    
+    <Note>
+    The new node automatically joins the cluster and begins receiving data.
+    </Note>
+  </Step>
+
+  <Step title="Verify Node Addition">
+    Check that the node has joined successfully:
+    
+    ```sql
+    SELECT node_id, address, is_live FROM crdb_internal.gossip_nodes;
+    ```
+  </Step>
+</Steps>
+
+### Kubernetes Node Scaling
+
+For Kubernetes deployments, scale the StatefulSet:
+
+<CodeGroup>
+```bash Scale Up
+# Increase replicas from 3 to 5
+kubectl scale statefulset cockroachdb --replicas=5
+
+# Verify scaling
+kubectl get pods -l app=cockroachdb
+```
+
+```bash Scale Down
+# Decrease replicas from 5 to 3
+kubectl scale statefulset cockroachdb --replicas=3
+
+# Verify scaling
+kubectl get pods -l app=cockroachdb
+```
+</CodeGroup>
+
+<Warning>
+When scaling down, ensure you're not removing so many nodes that you lose quorum or data replicas. CockroachDB requires a majority of nodes to be available.
+</Warning>
+
+## Removing Nodes from a Cluster
+
+### Graceful Node Decommissioning
+
+Before removing a node, decommission it to safely transfer its data:
+
+<Steps>
+  <Step title="Initiate Decommissioning">
+    ```bash
+    cockroach node decommission <node-id> \
+      --certs-dir=certs \
+      --host=<any-node-address>
+    ```
+    
+    This process moves all data off the target node to other nodes in the cluster.
+  </Step>
+
+  <Step title="Monitor Decommissioning Progress">
+    ```bash
+    cockroach node status \
+      --certs-dir=certs \
+      --host=<any-node-address> \
+      --decommission
+    ```
+    
+    Wait until the node shows as "decommissioned" before proceeding.
+  </Step>
+
+  <Step title="Stop the Node">
+    Once decommissioning completes:
+    
+    ```bash
+    # Find the process ID
+    ps aux | grep cockroach
+    
+    # Gracefully stop
+    kill -TERM <process-id>
+    ```
+  </Step>
+
+  <Step title="Verify Removal">
+    ```sql
+    SELECT node_id, address, is_live, membership 
+    FROM crdb_internal.gossip_nodes;
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+**Never force-remove nodes without decommissioning** unless they've permanently failed. Improper removal can lead to data loss or unavailability.
+</Warning>
+
+## Automatic Rebalancing
+
+CockroachDB automatically rebalances data across nodes based on:
+
+### Rebalancing Triggers
+
+- **Node Addition**: New nodes receive data from existing nodes
+- **Node Removal**: Data moves from decommissioned nodes
+- **Uneven Distribution**: Data shifts to balance storage utilization
+- **Locality Changes**: Data moves closer to where it's accessed
+
+### Monitoring Rebalancing
+
+```sql Monitor Replica Distribution
+SELECT 
+  store_id,
+  node_id,
+  replica_count,
+  capacity,
+  available,
+  used
+FROM crdb_internal.kv_store_status
+ORDER BY node_id;
+```
+
+### Controlling Rebalancing Rate
+
+Adjust cluster settings to control rebalancing speed:
+
+```sql
+-- Slower rebalancing (less impact on performance)
+SET CLUSTER SETTING kv.snapshot_rebalance.max_rate = '32MiB';
+
+-- Faster rebalancing (completes sooner, higher impact)
+SET CLUSTER SETTING kv.snapshot_rebalance.max_rate = '128MiB';
+```
+
+## Scaling Considerations
+
+### When to Scale Up
+
+<CardGroup cols={2}>
+  <Card title="High CPU Utilization" icon="microchip">
+    Sustained CPU usage above 70% across nodes
+  </Card>
+  <Card title="Memory Pressure" icon="memory">
+    Frequent cache evictions or OOM warnings
+  </Card>
+  <Card title="Storage Capacity" icon="hard-drive">
+    Disk usage exceeding 80% capacity
+  </Card>
+  <Card title="Query Latency" icon="clock">
+    Increasing query response times
+  </Card>
+</CardGroup>
+
+### Scaling Best Practices
+
+<Steps>
+  <Step title="Scale in Odd Numbers">
+    Always maintain an odd number of nodes (3, 5, 7, etc.) to ensure proper quorum for Raft consensus.
+    
+    <Note>
+    With an even number of nodes, you don't gain additional fault tolerance. A 4-node cluster can still only lose 1 node, same as a 3-node cluster.
+    </Note>
+  </Step>
+
+  <Step title="Scale Gradually">
+    Add one or two nodes at a time and wait for rebalancing to complete before adding more.
+  </Step>
+
+  <Step title="Monitor During Scaling">
+    Watch metrics for CPU, memory, disk I/O, and network throughput during scaling operations.
+  </Step>
+
+  <Step title="Plan for Replication Factor">
+    Ensure you have at least `replication_factor + 1` nodes for proper fault tolerance.
+  </Step>
+</Steps>
+
+## Replication Factor
+
+The replication factor determines how many copies of each data range exist:
+
+```sql View Current Replication Factor
+SHOW ZONE CONFIGURATIONS;
+```
+
+```sql Change Default Replication Factor
+ALTER RANGE default CONFIGURE ZONE USING num_replicas = 5;
+```
+
+<Warning>
+**Replication Factor Guidelines:**
+- **3 replicas** (default): Tolerates 1 node failure
+- **5 replicas**: Tolerates 2 node failures
+- **7 replicas**: Tolerates 3 node failures
+
+Higher replication increases fault tolerance but requires more storage and network bandwidth.
+</Warning>
+
+## Locality-Aware Scaling
+
+When deploying across multiple regions or availability zones:
+
+```bash Start Node with Locality
+cockroach start \
+  --certs-dir=certs \
+  --advertise-addr=<node-address> \
+  --join=<join-addresses> \
+  --locality=region=us-east,zone=us-east-1a \
+  --background
+```
+
+### Configure Zone Constraints
+
+```sql Constrain Data to Specific Localities
+ALTER DATABASE mydb CONFIGURE ZONE USING 
+  num_replicas = 3,
+  constraints = '{+region=us-east: 2, +region=us-west: 1}';
+```
+
+This ensures 2 replicas stay in us-east and 1 in us-west.
+
+## Performance Monitoring During Scaling
+
+<Accordion title="Key Metrics to Monitor">
+- **Replica Count per Store**: Should be balanced across stores
+- **Snapshot Rate**: Shows active rebalancing activity
+- **Disk I/O**: Increases during rebalancing
+- **Network Throughput**: Higher during data movement
+- **Query Latency**: Should remain stable during scaling
+- **Range Count**: Total ranges should distribute evenly
+</Accordion>
+
+## Troubleshooting Scaling Issues
+
+### Rebalancing Stuck
+
+```sql Check for Range Issues
+SELECT 
+  range_id,
+  start_key,
+  end_key,
+  replicas,
+  replica_localities
+FROM crdb_internal.ranges
+WHERE unavailable = true OR under_replicated = true;
+```
+
+### Uneven Distribution
+
+```sql Identify Unevenly Distributed Ranges
+SELECT 
+  store_id,
+  node_id,
+  replica_count,
+  capacity,
+  used * 100.0 / capacity as pct_used
+FROM crdb_internal.kv_store_status
+ORDER BY pct_used DESC;
+```
+
+## Next Steps
+
+<CardGroup cols={3}>
+  <Card title="Deployment" icon="server" href="./deployment">
+    Learn deployment strategies
+  </Card>
+  <Card title="Migration" icon="arrow-right-arrow-left" href="./migration">
+    Migrate data to CockroachDB
+  </Card>
+  <Card title="Backup & Restore" icon="floppy-disk" href="./backup-restore">
+    Implement backup strategies
+  </Card>
+</CardGroup>

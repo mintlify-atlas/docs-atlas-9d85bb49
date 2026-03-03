@@ -1,0 +1,473 @@
+---
+title: Logging
+description: Configure CockroachDB logging, manage log files, and integrate with external logging systems
+---
+
+## Overview
+
+CockroachDB provides comprehensive logging capabilities for debugging, auditing, and monitoring. Logs can be written to files, stderr, or external systems, with fine-grained control over verbosity, channels, and formats.
+
+## Log Configuration
+
+### Basic Log Configuration
+
+Configure logging using the `--log` flag:
+
+```bash
+cockroach start \
+  --log='file-defaults: {dir: /var/log/cockroach}'
+```
+
+### Log Configuration Format
+
+The `--log` flag accepts YAML configuration:
+
+<CodeGroup>
+```bash File Output
+--log='file-defaults: {dir: /var/log/cockroach, filter: INFO}'
+```
+
+```bash Stderr Output  
+--log='sinks: {stderr: {channels: all, filter: WARNING}}'
+```
+
+```bash Multiple Outputs
+--log='
+  file-defaults: {dir: /var/log/cockroach}
+  sinks:
+    stderr: {channels: [OPS, HEALTH], filter: INFO}
+'
+```
+</CodeGroup>
+
+## Log Channels
+
+CockroachDB organizes logs into channels based on their purpose:
+
+<Accordion title="Log Channels">
+  | Channel | Purpose | Examples |
+  |---------|---------|----------|
+  | `DEV` | Development events | Debug information, internal state |
+  | `OPS` | Operational events | Node start/stop, configuration changes |
+  | `HEALTH` | Health checks | Liveness checks, node availability |
+  | `STORAGE` | Storage layer | Compaction, disk I/O, store operations |
+  | `SESSIONS` | SQL sessions | Connection events, authentication |
+  | `SQL_SCHEMA` | Schema changes | DDL operations, schema migrations |
+  | `SQL_EXEC` | SQL execution | Query execution, statement logs |
+  | `SQL_PERF` | SQL performance | Slow queries, execution statistics |
+  | `SQL_INTERNAL_PERF` | Internal SQL | Background SQL operations |
+  | `PRIVILEGES` | Security | Permission checks, role changes |
+  | `SENSITIVE_ACCESS` | Data access | Audit trail for sensitive data |
+</Accordion>
+
+### Configuring Channels
+
+Route specific channels to different outputs:
+
+```bash
+cockroach start --log='
+  sinks:
+    stderr:
+      channels: [OPS, HEALTH]
+      filter: INFO
+    file-groups:
+      security:
+        channels: [PRIVILEGES, SENSITIVE_ACCESS]
+        dir: /var/log/cockroach/security
+        filter: INFO
+      sql:
+        channels: [SQL_EXEC, SQL_PERF]
+        dir: /var/log/cockroach/sql
+        filter: WARNING
+'
+```
+
+## Log Levels
+
+CockroachDB supports standard log levels (verbosity):
+
+| Level | Severity | When to Use |
+|-------|----------|------------|
+| `NONE` | Silent | Disable logging |
+| `FATAL` | Critical errors | Process-terminating errors |
+| `ERROR` | Errors | Errors that don't terminate process |
+| `WARNING` | Warnings | Potential issues |
+| `INFO` | Information | Standard operational messages |
+| `DEBUG` | Debug | Detailed debugging information |
+
+### Setting Log Level
+
+<CodeGroup>
+```bash Global Level
+--log='file-defaults: {filter: WARNING}'
+```
+
+```bash Per-Channel Level
+--log='
+  sinks:
+    file-groups:
+      default:
+        filter: INFO
+      sql:
+        channels: SQL_EXEC
+        filter: DEBUG
+'
+```
+</CodeGroup>
+
+## Log Destinations
+
+### File Logging
+
+Default file logging configuration:
+
+```bash
+cockroach start --log='file-defaults: {dir: /var/log/cockroach}'
+```
+
+Log files are created in the specified directory:
+```
+/var/log/cockroach/
+  cockroach.log         # Main log file
+  cockroach-sql.log     # SQL execution logs
+  cockroach-security.log # Security audit logs
+  cockroach-health.log  # Health check logs
+```
+
+<Note>
+  Log files automatically rotate when they reach the configured size limit (default 10MB).
+</Note>
+
+### Stderr Logging
+
+Output logs to standard error:
+
+```bash
+cockroach start --log='sinks: {stderr: {channels: all}}'
+```
+
+Useful for:
+- Container deployments (Docker, Kubernetes)
+- Development environments
+- Systemd integration with journal
+
+### Syslog Integration
+
+Send logs to syslog:
+
+```bash
+cockroach start --log='
+  sinks:
+    fluent-servers:
+      syslog:
+        channels: all
+        address: localhost:514
+        network: udp
+'
+```
+
+## Log File Management
+
+### Log Rotation
+
+Configure automatic log rotation:
+
+```bash
+cockroach start --log='
+  file-defaults:
+    dir: /var/log/cockroach
+    max-file-size: 50MiB
+    max-group-size: 1GiB
+'
+```
+
+Log rotation settings:
+- `max-file-size`: Maximum size of a single log file (default 10MB)
+- `max-group-size`: Maximum combined size for a log group (default 100MB)
+- Old files are renamed with timestamps
+- Oldest files deleted when group size exceeded
+
+### Log File Format
+
+Log entries use a structured format:
+
+```
+I220303 15:42:17.123456 1234 5@util/log/file.go:456  [n1,s1] sample log message
+```
+
+Format breakdown:
+- `I`: Log level (I=INFO, W=WARNING, E=ERROR, F=FATAL)
+- `220303`: Date (YYMMDD)
+- `15:42:17.123456`: Time with microseconds
+- `1234`: Goroutine ID
+- `5@util/log/file.go:456`: Line number and source location
+- `[n1,s1]`: Node and store tags
+- `sample log message`: Log message
+
+### Viewing Logs
+
+<CodeGroup>
+```bash Tail Logs
+tail -f /var/log/cockroach/cockroach.log
+```
+
+```bash Search Logs
+grep "ERROR" /var/log/cockroach/cockroach.log
+```
+
+```bash Filter by Channel
+grep "SQL_EXEC" /var/log/cockroach/cockroach-sql.log
+```
+</CodeGroup>
+
+## Slow Query Logging
+
+Enable logging for slow queries:
+
+```sql
+-- Set slow query threshold
+SET CLUSTER SETTING sql.log.slow_query.latency_threshold = '100ms';
+
+-- Enable slow query logging  
+SET CLUSTER SETTING sql.log.slow_query.experimental_full_table_scans.enabled = true;
+```
+
+Slow queries are logged to the `SQL_PERF` channel:
+
+```bash
+cockroach start --log='
+  sinks:
+    file-groups:
+      slow-queries:
+        channels: SQL_PERF
+        dir: /var/log/cockroach/slow
+        filter: INFO
+'
+```
+
+### Slow Query Log Format
+
+Slow query logs include:
+- Query text
+- Execution time
+- Number of rows processed
+- Resources used (CPU, memory, network)
+- Execution plan
+
+## Audit Logging
+
+Enable audit logging for security compliance:
+
+```sql
+-- Enable audit logging for a table
+ALTER TABLE sensitive_data SET (experimental_audit = 'READ_WRITE');
+
+-- View audit events
+SELECT * FROM system.eventlog 
+WHERE "eventType" = 'sensitive_table_access'
+ORDER BY timestamp DESC;
+```
+
+Configure audit log destination:
+
+```bash
+cockroach start --log='
+  sinks:
+    file-groups:
+      audit:
+        channels: SENSITIVE_ACCESS
+        dir: /var/log/cockroach/audit
+        filter: INFO
+'
+```
+
+<Warning>
+  Audit logs can generate significant volume. Monitor disk space and configure appropriate retention policies.
+</Warning>
+
+## Structured Logging
+
+### JSON Format
+
+Output logs in JSON format for log aggregation systems:
+
+```bash
+cockroach start --log='
+  file-defaults:
+    format: json
+    dir: /var/log/cockroach
+'
+```
+
+JSON log entry example:
+```json
+{
+  "timestamp": "2022-03-03T15:42:17.123456Z",
+  "severity": "INFO",
+  "channel": "OPS",
+  "goroutine": 1234,
+  "file": "util/log/file.go",
+  "line": 456,
+  "tags": {"n": 1, "s": 1},
+  "message": "sample log message"
+}
+```
+
+### Fluent Bit / Fluentd Integration
+
+Configure CockroachDB to send logs to Fluent Bit:
+
+```bash
+cockroach start --log='
+  sinks:
+    fluent-servers:
+      fluentbit:
+        channels: all
+        address: localhost:24224
+        format: json-fluent-compact
+'
+```
+
+## Deprecated Log Flags
+
+Older log flags are deprecated in favor of `--log`:
+
+<Accordion title="Deprecated Flags and Equivalents">
+  | Deprecated Flag | Modern Equivalent |
+  |----------------|-------------------|
+  | `--log-dir` | `--log='file-defaults: {dir: /path}'` |
+  | `--log-file-verbosity` | `--log='file-defaults: {filter: LEVEL}'` |
+  | `--log-file-max-size` | `--log='file-defaults: {max-file-size: SIZE}'` |
+  | `--logtostderr` | `--log='sinks: {stderr: {channels: all}}'` |
+</Accordion>
+
+## Checking Log Configuration
+
+Verify your log configuration:
+
+```bash
+cockroach debug check-log-config --log='<your-config>'
+```
+
+This validates the log configuration without starting a node.
+
+## Common Log Configurations
+
+### Production Configuration
+
+```bash
+cockroach start --log='
+  file-defaults:
+    dir: /var/log/cockroach
+    filter: INFO
+    max-file-size: 50MiB
+    max-group-size: 1GiB
+  sinks:
+    file-groups:
+      security:
+        channels: [PRIVILEGES, SENSITIVE_ACCESS]
+        dir: /var/log/cockroach/security
+      sql-slow:
+        channels: SQL_PERF
+        dir: /var/log/cockroach/slow
+    stderr:
+      channels: [OPS, HEALTH]
+      filter: WARNING
+'
+```
+
+### Development Configuration
+
+```bash
+cockroach start --log='
+  sinks:
+    stderr:
+      channels: all
+      filter: DEBUG
+'
+```
+
+### Container Configuration
+
+```bash
+cockroach start --log='
+  sinks:
+    stderr:
+      channels: all
+      filter: INFO
+      format: json
+'
+```
+
+## Log Analysis
+
+### Common Log Patterns
+
+<CodeGroup>
+```bash Find Errors
+grep "^E" /var/log/cockroach/cockroach.log
+```
+
+```bash Node Start Events
+grep "starting cockroach node" /var/log/cockroach/cockroach.log
+```
+
+```bash Raft Events
+grep "raft" /var/log/cockroach/cockroach.log
+```
+
+```bash GC Activity
+grep "compaction" /var/log/cockroach/cockroach.log
+```
+</CodeGroup>
+
+### Log Aggregation
+
+Integrate with log aggregation systems:
+
+1. **ELK Stack**: Use Filebeat to ship logs to Elasticsearch
+2. **Splunk**: Configure Splunk forwarder to collect log files
+3. **CloudWatch Logs**: Use CloudWatch agent for AWS deployments
+4. **Datadog**: Send logs via Datadog agent
+
+## Best Practices
+
+<Accordion title="Logging Recommendations">
+  1. **Use appropriate log levels**: INFO for production, DEBUG for troubleshooting
+  2. **Separate sensitive logs**: Isolate audit and security logs
+  3. **Monitor log volume**: High verbosity can impact performance
+  4. **Rotate logs regularly**: Prevent disk space exhaustion
+  5. **Centralize logs**: Use log aggregation for multi-node clusters
+  6. **Retain audit logs**: Comply with regulatory requirements
+  7. **Test log configuration**: Use `debug check-log-config` before deployment
+  8. **Document log locations**: Ensure team knows where to find logs
+</Accordion>
+
+## Troubleshooting
+
+### Logs Not Appearing
+
+- Verify log directory exists and is writable
+- Check `--log` configuration syntax
+- Review stderr for configuration errors
+- Ensure sufficient disk space
+
+### High Log Volume
+
+- Reduce log level (INFO → WARNING)
+- Disable verbose channels
+- Adjust `max-file-size` and retention
+- Filter out noisy log messages
+
+### Missing Log Entries
+
+- Check log level filters
+- Verify channel configuration
+- Review log rotation settings
+- Check for disk space issues
+
+## See Also
+
+- [Monitoring](/admin/monitoring) - Metrics and observability
+- [Metrics](/admin/metrics) - Performance metrics
+- [Configuration](/admin/configuration) - General configuration options

@@ -1,0 +1,532 @@
+---
+title: Migrating to CockroachDB
+description: Strategies and tools for migrating data from other databases to CockroachDB
+---
+
+Migrating to CockroachDB from other databases requires careful planning and execution. This guide covers migration strategies, tools, and best practices for moving data from PostgreSQL, MySQL, and other databases.
+
+## Migration Overview
+
+<CardGroup cols={2}>
+  <Card title="PostgreSQL" icon="elephant">
+    Highly compatible with minimal application changes
+  </Card>
+  <Card title="MySQL" icon="database">
+    Requires SQL dialect translation and schema adjustments
+  </Card>
+  <Card title="Oracle" icon="building">
+    Moderate compatibility with some feature mapping
+  </Card>
+  <Card title="Other SQL Databases" icon="table">
+    Case-by-case assessment required
+  </Card>
+</CardGroup>
+
+## Migration Strategies
+
+### Offline Migration
+
+Complete migration during a maintenance window:
+
+<Steps>
+  <Step title="Prepare CockroachDB Cluster">
+    Set up and configure your target CockroachDB cluster with appropriate sizing and replication.
+  </Step>
+
+  <Step title="Export Source Data">
+    Extract data from the source database using database-specific tools.
+  </Step>
+
+  <Step title="Transform Schema and Data">
+    Convert schemas and data to CockroachDB-compatible format.
+  </Step>
+
+  <Step title="Import to CockroachDB">
+    Load data into CockroachDB using IMPORT or RESTORE commands.
+  </Step>
+
+  <Step title="Validate and Cutover">
+    Verify data integrity, test applications, and switch production traffic.
+  </Step>
+</Steps>
+
+### Online Migration
+
+Migrate with minimal downtime using change data capture:
+
+<Steps>
+  <Step title="Initial Snapshot">
+    Take a snapshot of the source database and load it into CockroachDB.
+  </Step>
+
+  <Step title="Set Up CDC">
+    Configure change data capture to stream ongoing changes from source to CockroachDB.
+  </Step>
+
+  <Step title="Sync Period">
+    Allow both databases to stay in sync while applications continue running.
+  </Step>
+
+  <Step title="Cutover">
+    Switch application traffic to CockroachDB during a brief maintenance window.
+  </Step>
+</Steps>
+
+## Migrating from PostgreSQL
+
+CockroachDB is highly compatible with PostgreSQL, making migration straightforward:
+
+### Schema Export
+
+```bash Export PostgreSQL Schema
+pg_dump \
+  --host=postgres-host \
+  --username=postgres \
+  --schema-only \
+  --no-owner \
+  --no-acl \
+  mydatabase > schema.sql
+```
+
+### Schema Compatibility Review
+
+Review and adjust PostgreSQL-specific features:
+
+<Accordion title="Common PostgreSQL Compatibility Issues">
+- **SERIAL vs SEQUENCE**: CockroachDB uses `unique_rowid()` or `gen_random_uuid()` instead of `SERIAL`
+- **Stored Procedures**: Limited support; may need conversion to application logic
+- **Extensions**: Review required extensions (most are unsupported)
+- **Triggers**: Evaluate trigger logic for conversion
+- **Custom Types**: Map custom types to CockroachDB equivalents
+- **Partitioning Syntax**: Different partitioning implementation
+</Accordion>
+
+### Schema Conversion Example
+
+<CodeGroup>
+```sql PostgreSQL Schema
+CREATE TABLE users (
+  id SERIAL PRIMARY KEY,
+  email VARCHAR(255) UNIQUE NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_users_email ON users(email);
+```
+
+```sql CockroachDB Schema
+CREATE TABLE users (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  email STRING(255) UNIQUE NOT NULL,
+  created_at TIMESTAMP DEFAULT now()
+);
+
+CREATE INDEX idx_users_email ON users(email);
+```
+</CodeGroup>
+
+### Data Export and Import
+
+<Steps>
+  <Step title="Export Data to CSV">
+    ```bash
+    psql -h postgres-host -U postgres -d mydatabase -c \
+      "COPY users TO STDOUT CSV HEADER" > users.csv
+    ```
+  </Step>
+
+  <Step title="Upload to Cloud Storage">
+    ```bash
+    aws s3 cp users.csv s3://my-migration-bucket/
+    ```
+  </Step>
+
+  <Step title="Import into CockroachDB">
+    ```sql
+    IMPORT INTO users 
+      CSV DATA (
+        's3://my-migration-bucket/users.csv?AWS_ACCESS_KEY_ID=xxx&AWS_SECRET_ACCESS_KEY=xxx'
+      )
+      WITH skip_foreign_keys;
+    ```
+  </Step>
+</Steps>
+
+<Note>
+The `IMPORT` statement is much faster than `INSERT` for bulk data loading.
+</Note>
+
+## Migrating from MySQL
+
+MySQL migrations require more extensive schema and SQL translation:
+
+### Schema Differences
+
+<CodeGroup>
+```sql MySQL Schema
+CREATE TABLE orders (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id INT NOT NULL,
+  total DECIMAL(10,2) NOT NULL,
+  status ENUM('pending', 'completed', 'cancelled'),
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id),
+  INDEX idx_status (status)
+) ENGINE=InnoDB;
+```
+
+```sql CockroachDB Schema
+CREATE TABLE orders (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL,
+  total DECIMAL(10,2) NOT NULL,
+  status STRING CHECK (status IN ('pending', 'completed', 'cancelled')),
+  created_at TIMESTAMP DEFAULT now(),
+  FOREIGN KEY (user_id) REFERENCES users(id),
+  INDEX idx_status (status)
+);
+```
+</CodeGroup>
+
+### MySQL to CockroachDB Type Mapping
+
+| MySQL Type | CockroachDB Type | Notes |
+|------------|------------------|-------|
+| `INT AUTO_INCREMENT` | `UUID` or `INT8` with `unique_rowid()` | Use UUID for distributed systems |
+| `VARCHAR(n)` | `STRING(n)` | Direct mapping |
+| `DATETIME` | `TIMESTAMP` | Similar functionality |
+| `ENUM` | `STRING` with `CHECK` constraint | Convert to check constraint |
+| `TINYINT(1)` | `BOOL` | Direct mapping for boolean |
+| `BLOB` | `BYTES` | Direct mapping |
+| `TEXT` | `STRING` | Direct mapping |
+
+### Data Migration from MySQL
+
+```bash Export MySQL Data
+mysqldump \
+  --host=mysql-host \
+  --user=root \
+  --password \
+  --tab=/tmp/export \
+  --fields-terminated-by=',' \
+  --fields-enclosed-by='"' \
+  --lines-terminated-by='\n' \
+  mydatabase orders
+```
+
+## Using IMPORT for Bulk Data
+
+The `IMPORT` statement is the fastest way to load large datasets:
+
+### Import CSV Data
+
+```sql Import CSV
+IMPORT INTO users (id, email, name, created_at)
+CSV DATA (
+  's3://bucket/users.csv?AWS_ACCESS_KEY_ID=xxx&AWS_SECRET_ACCESS_KEY=xxx'
+)
+WITH
+  skip = '1',  -- Skip header row
+  delimiter = ',',
+  nullif = '';
+```
+
+### Import from Multiple Files
+
+```sql Import Multiple CSV Files
+IMPORT INTO orders
+CSV DATA (
+  's3://bucket/orders-part1.csv?AWS_ACCESS_KEY_ID=xxx&AWS_SECRET_ACCESS_KEY=xxx',
+  's3://bucket/orders-part2.csv?AWS_ACCESS_KEY_ID=xxx&AWS_SECRET_ACCESS_KEY=xxx',
+  's3://bucket/orders-part3.csv?AWS_ACCESS_KEY_ID=xxx&AWS_SECRET_ACCESS_KEY=xxx'
+)
+WITH skip = '1';
+```
+
+### Import PostgreSQL Dump
+
+```sql Import PostgreSQL Dump
+IMPORT PGDUMP 
+'s3://bucket/pgdump.sql?AWS_ACCESS_KEY_ID=xxx&AWS_SECRET_ACCESS_KEY=xxx'
+WITH ignore_unsupported_statements;
+```
+
+### Import MySQL Dump
+
+```sql Import MySQL Dump
+IMPORT MYSQLDUMP 
+'s3://bucket/mysqldump.sql?AWS_ACCESS_KEY_ID=xxx&AWS_SECRET_ACCESS_KEY=xxx'
+WITH ignore_unsupported_statements;
+```
+
+<Warning>
+The `ignore_unsupported_statements` option skips incompatible SQL. Review warnings to ensure critical statements weren't skipped.
+</Warning>
+
+## Change Data Capture (CDC)
+
+For online migrations, use CDC to keep databases synchronized:
+
+### Using External CDC Tools
+
+<CardGroup cols={2}>
+  <Card title="Debezium">
+    Open-source CDC platform supporting PostgreSQL and MySQL
+  </Card>
+  <Card title="Striim">
+    Real-time data integration with CockroachDB support
+  </Card>
+  <Card title="AWS DMS">
+    Database Migration Service for AWS environments
+  </Card>
+  <Card title="Custom Scripts">
+    Application-level replication logic
+  </Card>
+</CardGroup>
+
+## Application Migration
+
+### Connection String Changes
+
+<CodeGroup>
+```python PostgreSQL to CockroachDB
+# PostgreSQL
+conn_string = "postgresql://user:pass@postgres-host:5432/mydb"
+
+# CockroachDB (secure)
+conn_string = "postgresql://user:pass@cockroach-host:26257/mydb?sslmode=verify-full&sslrootcert=certs/ca.crt"
+```
+
+```java JDBC Connection
+// PostgreSQL
+String url = "jdbc:postgresql://postgres-host:5432/mydb";
+
+// CockroachDB
+String url = "jdbc:postgresql://cockroach-host:26257/mydb?sslmode=require";
+```
+</CodeGroup>
+
+### ORM Configuration Updates
+
+<CodeGroup>
+```python Django Settings
+# settings.py
+DATABASES = {
+    'default': {
+        'ENGINE': 'django_cockroachdb',
+        'NAME': 'mydb',
+        'USER': 'myuser',
+        'PASSWORD': 'mypassword',
+        'HOST': 'cockroach-host',
+        'PORT': '26257',
+        'OPTIONS': {
+            'sslmode': 'verify-full',
+            'sslrootcert': '/path/to/ca.crt',
+        },
+    },
+}
+```
+
+```javascript Sequelize Configuration
+const sequelize = new Sequelize('mydb', 'myuser', 'mypassword', {
+  host: 'cockroach-host',
+  port: 26257,
+  dialect: 'postgres',
+  dialectOptions: {
+    ssl: {
+      ca: fs.readFileSync('/path/to/ca.crt').toString(),
+      rejectUnauthorized: true
+    }
+  }
+});
+```
+</CodeGroup>
+
+### Query Optimization
+
+Some queries may need optimization for CockroachDB:
+
+<Accordion title="Common Query Adjustments">
+- **LIMIT without ORDER BY**: Add ORDER BY for consistent results in distributed system
+- **Transactions**: Consider using `SELECT FOR UPDATE` for row-level locking
+- **Auto-increment IDs**: Replace with UUIDs or use `unique_rowid()`
+- **Timestamp precision**: CockroachDB uses microsecond precision
+- **Implicit type conversions**: May behave differently; make conversions explicit
+</Accordion>
+
+## Validation and Testing
+
+<Steps>
+  <Step title="Schema Validation">
+    ```sql
+    -- Verify table counts
+    SELECT tablename, row_count 
+    FROM [SHOW TABLES] 
+    JOIN (SELECT table_name, count(*) as row_count 
+          FROM information_schema.tables 
+          GROUP BY table_name) 
+    ON tablename = table_name;
+    ```
+  </Step>
+
+  <Step title="Data Validation">
+    ```sql
+    -- Compare row counts
+    SELECT COUNT(*) FROM users;
+    
+    -- Verify data integrity
+    SELECT COUNT(DISTINCT id) = COUNT(*) AS no_duplicates FROM users;
+    
+    -- Check for NULL values
+    SELECT COUNT(*) FROM users WHERE email IS NULL;
+    ```
+  </Step>
+
+  <Step title="Performance Testing">
+    Run representative queries and transactions to ensure acceptable performance.
+  </Step>
+
+  <Step title="Application Testing">
+    Test all application features thoroughly in a staging environment.
+  </Step>
+</Steps>
+
+## Migration Best Practices
+
+<Steps>
+  <Step title="Start Small">
+    Begin with non-critical databases or tables to gain experience with the migration process.
+  </Step>
+
+  <Step title="Test Thoroughly">
+    Perform multiple test migrations in non-production environments before the actual migration.
+  </Step>
+
+  <Step title="Plan for Rollback">
+    Have a tested rollback plan in case issues arise during cutover.
+  </Step>
+
+  <Step title="Monitor Closely">
+    Set up comprehensive monitoring before migration and watch closely during and after cutover.
+  </Step>
+
+  <Step title="Migrate During Low Traffic">
+    Schedule cutover during periods of low application usage to minimize impact.
+  </Step>
+
+  <Step title="Document Changes">
+    Record all schema modifications, query changes, and configuration adjustments.
+  </Step>
+
+  <Step title="Keep Source Database">
+    Maintain the source database for a period after migration as a safety net.
+  </Step>
+</Steps>
+
+## Common Migration Challenges
+
+<CardGroup cols={2}>
+  <Card title="Sequence Gaps" icon="list-ol">
+    Use UUIDs instead of auto-incrementing integers for distributed systems
+  </Card>
+  <Card title="Foreign Key Constraints" icon="link">
+    May need to disable during import and re-enable after
+  </Card>
+  <Card title="Large Object Storage" icon="file">
+    Consider external blob storage for very large files
+  </Card>
+  <Card title="Timezone Handling" icon="clock">
+    Ensure consistent timezone handling (CockroachDB stores in UTC)
+  </Card>
+</CardGroup>
+
+## Monitoring Migration Progress
+
+```sql Check Import Job Status
+SHOW JOBS 
+WHERE job_type = 'IMPORT' 
+  AND status = 'running';
+```
+
+```sql View Job Details
+SELECT 
+  job_id,
+  description,
+  status,
+  fraction_completed,
+  created,
+  started
+FROM crdb_internal.jobs
+WHERE job_type = 'IMPORT'
+ORDER BY created DESC
+LIMIT 10;
+```
+
+## Post-Migration Tasks
+
+<Steps>
+  <Step title="Update Statistics">
+    ```sql
+    ANALYZE users;
+    ANALYZE orders;
+    ```
+  </Step>
+
+  <Step title="Rebuild Indexes">
+    Ensure all indexes are properly created:
+    
+    ```sql
+    SHOW INDEXES FROM users;
+    ```
+  </Step>
+
+  <Step title="Set Up Monitoring">
+    Configure alerts for the new CockroachDB cluster.
+  </Step>
+
+  <Step title="Optimize Performance">
+    Review query plans and add indexes as needed:
+    
+    ```sql
+    EXPLAIN ANALYZE SELECT * FROM users WHERE email = 'user@example.com';
+    ```
+  </Step>
+</Steps>
+
+## Migration Checklist
+
+<Accordion title="Complete Migration Checklist">
+- [ ] Source database schema exported and reviewed
+- [ ] Schema converted to CockroachDB-compatible format
+- [ ] Test migration completed successfully
+- [ ] Data validation queries prepared
+- [ ] Application connection strings updated
+- [ ] ORM configurations updated
+- [ ] Performance baselines established
+- [ ] Monitoring and alerting configured
+- [ ] Rollback plan documented and tested
+- [ ] Stakeholders notified of migration schedule
+- [ ] Production data exported
+- [ ] Data imported into CockroachDB
+- [ ] Data validation completed
+- [ ] Indexes and constraints verified
+- [ ] Application testing passed
+- [ ] Performance testing passed
+- [ ] Cutover completed
+- [ ] Post-migration monitoring active
+- [ ] Source database archived
+</Accordion>
+
+## Next Steps
+
+<CardGroup cols={3}>
+  <Card title="Scaling" icon="chart-line" href="./scaling">
+    Scale your new cluster
+  </Card>
+  <Card title="Backup & Restore" icon="floppy-disk" href="./backup-restore">
+    Set up backup strategies
+  </Card>
+  <Card title="Security" icon="shield" href="./security">
+    Secure your deployment
+  </Card>
+</CardGroup>

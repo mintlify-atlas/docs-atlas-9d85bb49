@@ -1,0 +1,160 @@
+---
+title: CLI Overview
+description: Introduction to CockroachDB command-line interface and common usage patterns
+---
+
+The CockroachDB command-line interface (CLI) is the primary tool for interacting with CockroachDB clusters. It provides commands for starting nodes, executing SQL queries, managing cluster operations, and debugging.
+
+## Getting Started
+
+The `cockroach` binary provides all CLI functionality through subcommands:
+
+```bash
+cockroach [command] [flags]
+```
+
+<Note>
+Run `cockroach help` to see all available commands and `cockroach [command] --help` for detailed information about a specific command.
+</Note>
+
+## Core Commands
+
+### Server Operations
+
+| Command | Description |
+|---------|-------------|
+| `start` | Start a node in a multi-node cluster |
+| `start-single-node` | Start a single-node cluster |
+| `init` | Initialize a cluster |
+
+### Client Operations
+
+| Command | Description |
+|---------|-------------|
+| `sql` | Open an interactive SQL shell |
+| `node` | List, inspect, drain, or remove nodes |
+| `quit` | Drain and shutdown a node |
+
+### Administrative Operations
+
+| Command | Description |
+|---------|-------------|
+| `debug` | Debugging tools for troubleshooting |
+| `gen` | Generate auxiliary files (certificates, docs, etc.) |
+| `version` | Display version information |
+
+## Common Patterns
+
+### Connecting to a Cluster
+
+All client commands support standard connection flags:
+
+<CodeGroup>
+```bash Secure Connection
+cockroach sql \
+  --host=localhost:26257 \
+  --certs-dir=certs \
+  --user=root
+```
+
+```bash Insecure Connection
+cockroach sql \
+  --host=localhost:26257 \
+  --insecure
+```
+
+```bash Using URL
+cockroach sql \
+  --url="postgresql://root@localhost:26257?sslmode=verify-full&sslcert=certs/client.root.crt&sslkey=certs/client.root.key&sslrootcert=certs/ca.crt"
+```
+</CodeGroup>
+
+### Common Flags
+
+These flags are available across most commands:
+
+<ParamField path="--host" type="string" default="localhost:26257">
+  Database server host and port. Can be specified as hostname or IP address.
+</ParamField>
+
+<ParamField path="--certs-dir" type="string" default="${HOME}/.cockroach-certs">
+  Path to certificate directory for secure connections.
+</ParamField>
+
+<ParamField path="--insecure" type="boolean" default="false">
+  Connect without encryption (not recommended for production).
+</ParamField>
+
+<ParamField path="--user" type="string" default="root">
+  Database user name.
+</ParamField>
+
+<ParamField path="--url" type="string">
+  Full connection URL (alternative to individual connection flags).
+</ParamField>
+
+## Environment Variables
+
+Many CLI flags can be set via environment variables:
+
+| Environment Variable | Corresponding Flag |
+|---------------------|--------------------|
+| `COCKROACH_HOST` | `--host` |
+| `COCKROACH_PORT` | `--port` |
+| `COCKROACH_DATABASE` | `--database` |
+| `COCKROACH_USER` | `--user` |
+| `COCKROACH_URL` | `--url` |
+
+<Warning>
+Command-line flags take precedence over environment variables.
+</Warning>
+
+## Exit Codes
+
+The CLI uses standard exit codes:
+
+- **0**: Success
+- **1**: General error
+- **2**: Command-line parsing error
+- **3**: Connection error
+- **Specific codes**: See individual command documentation
+
+## Security Best Practices
+
+<Note>
+Always use secure connections in production:
+
+1. Generate certificates using `cockroach cert`
+2. Use `--certs-dir` to specify certificate location
+3. Never use `--insecure` in production environments
+4. Protect private keys with appropriate file permissions
+</Note>
+
+## Shell Completion
+
+Enable command completion for your shell:
+
+<Tabs>
+  <Tab title="Bash">
+    ```bash
+    cockroach gen autocomplete bash > /etc/bash_completion.d/cockroach
+    ```
+  </Tab>
+  <Tab title="Zsh">
+    ```bash
+    cockroach gen autocomplete zsh > /usr/local/share/zsh/site-functions/_cockroach
+    ```
+  </Tab>
+  <Tab title="Fish">
+    ```bash
+    cockroach gen autocomplete fish > ~/.config/fish/completions/cockroach.fish
+    ```
+  </Tab>
+</Tabs>
+
+## Next Steps
+
+- [Start a Cluster](/cli/cockroach-start)
+- [Execute SQL](/cli/cockroach-sql)
+- [Manage Nodes](/cli/cockroach-node)
+- [Debug Issues](/cli/cockroach-debug)

@@ -1,0 +1,505 @@
+---
+title: Security Configuration
+description: Configure security, authentication, and encryption for CockroachDB clusters
+---
+
+CockroachDB provides enterprise-grade security features including TLS encryption, certificate-based authentication, role-based access control (RBAC), and encryption at rest.
+
+## Security Architecture
+
+CockroachDB implements a defense-in-depth security model:
+
+<CardGroup cols={2}>
+  <Card title="Transport Encryption" icon="lock">
+    TLS 1.2/1.3 for all inter-node and client communication
+  </Card>
+  <Card title="Authentication" icon="key">
+    Certificate-based and password authentication
+  </Card>
+  <Card title="Authorization" icon="user-shield">
+    Role-based access control with granular privileges
+  </Card>
+  <Card title="Encryption at Rest" icon="database">
+    AES encryption for data stored on disk
+  </Card>
+</CardGroup>
+
+## Certificate Management
+
+### Creating the Certificate Authority (CA)
+
+Establish a certificate authority for your cluster:
+
+<Steps>
+  <Step title="Create CA Certificate">
+    ```bash
+    mkdir certs my-safe-directory
+    
+    cockroach cert create-ca \
+      --certs-dir=certs \
+      --ca-key=my-safe-directory/ca.key
+    ```
+    
+    <Warning>
+    Store `ca.key` securely. Anyone with access to this file can create valid certificates for your cluster.
+    </Warning>
+  </Step>
+
+  <Step title="Verify CA Creation">
+    ```bash
+    ls -l certs/
+    # Should show: ca.crt
+    
+    ls -l my-safe-directory/
+    # Should show: ca.key
+    ```
+  </Step>
+</Steps>
+
+### Creating Node Certificates
+
+Generate certificates for each node in the cluster:
+
+```bash Create Node Certificate
+cockroach cert create-node \
+  <node-hostname> \
+  <node-ip-address> \
+  localhost \
+  127.0.0.1 \
+  --certs-dir=certs \
+  --ca-key=my-safe-directory/ca.key
+```
+
+<CodeGroup>
+```bash Single Node
+cockroach cert create-node \
+  node1.example.com \
+  10.0.0.1 \
+  localhost \
+  127.0.0.1 \
+  --certs-dir=certs \
+  --ca-key=my-safe-directory/ca.key
+```
+
+```bash Multiple Addresses
+cockroach cert create-node \
+  node1.example.com \
+  node1.internal \
+  10.0.0.1 \
+  172.16.0.1 \
+  localhost \
+  127.0.0.1 \
+  --certs-dir=certs \
+  --ca-key=my-safe-directory/ca.key
+```
+</CodeGroup>
+
+<Note>
+Include all hostnames, IP addresses, and DNS names that clients might use to connect to the node.
+</Note>
+
+### Creating Client Certificates
+
+Create certificates for database users:
+
+```bash Root User Certificate
+cockroach cert create-client \
+  root \
+  --certs-dir=certs \
+  --ca-key=my-safe-directory/ca.key
+```
+
+```bash Application User Certificate
+cockroach cert create-client \
+  myapp \
+  --certs-dir=certs \
+  --ca-key=my-safe-directory/ca.key
+```
+
+### Certificate Distribution
+
+<Steps>
+  <Step title="Copy Certificates to Nodes">
+    Each node needs:
+    - `ca.crt` (CA certificate)
+    - `node.crt` (node certificate)
+    - `node.key` (node private key)
+    
+    ```bash
+    # Copy to each node
+    scp certs/ca.crt node1:/path/to/certs/
+    scp certs/node.crt node1:/path/to/certs/
+    scp certs/node.key node1:/path/to/certs/
+    ```
+  </Step>
+
+  <Step title="Set Permissions">
+    ```bash
+    chmod 600 /path/to/certs/node.key
+    chmod 644 /path/to/certs/node.crt
+    chmod 644 /path/to/certs/ca.crt
+    ```
+  </Step>
+
+  <Step title="Distribute Client Certificates">
+    Application servers need:
+    - `ca.crt`
+    - `client.<username>.crt`
+    - `client.<username>.key`
+  </Step>
+</Steps>
+
+## Starting a Secure Cluster
+
+### Start Nodes with TLS
+
+```bash Start Secure Node
+cockroach start \
+  --certs-dir=certs \
+  --advertise-addr=<node-address> \
+  --join=<node1>,<node2>,<node3> \
+  --cache=.25 \
+  --max-sql-memory=.25 \
+  --background
+```
+
+<Note>
+Omitting `--insecure` requires TLS certificates. The cluster will not start without proper certificates.
+</Note>
+
+### Initialize Secure Cluster
+
+```bash
+cockroach init \
+  --certs-dir=certs \
+  --host=<any-node-address>
+```
+
+## Authentication Methods
+
+### Certificate Authentication
+
+Connect using client certificates:
+
+```bash SQL Client with Certificate
+cockroach sql \
+  --certs-dir=certs \
+  --host=<node-address> \
+  --user=root
+```
+
+```bash Application Connection String
+postgresql://myapp@node1:26257/mydb?sslmode=verify-full&sslrootcert=certs/ca.crt&sslcert=certs/client.myapp.crt&sslkey=certs/client.myapp.key
+```
+
+### Password Authentication
+
+Create users with password authentication:
+
+```sql Create User with Password
+CREATE USER myuser WITH PASSWORD 'secure-password';
+```
+
+```sql Change User Password
+ALTER USER myuser WITH PASSWORD 'new-secure-password';
+```
+
+```bash Connect with Password
+cockroach sql \
+  --certs-dir=certs \
+  --host=<node-address> \
+  --user=myuser
+# Prompts for password
+```
+
+<Warning>
+Password authentication requires TLS encryption. CockroachDB will reject password authentication over insecure connections.
+</Warning>
+
+### Disable Root Password Login
+
+For enhanced security, disable password authentication for the root user:
+
+```sql
+SET CLUSTER SETTING server.user_login.password_encryption = 'scram-sha-256';
+SET CLUSTER SETTING server.user_login.min_password_length = 12;
+SET CLUSTER SETTING server.user_login.root_login.enabled = false;
+```
+
+## Role-Based Access Control
+
+### Creating Roles
+
+```sql Create Custom Role
+CREATE ROLE developers;
+CREATE ROLE analysts;
+CREATE ROLE app_writers;
+```
+
+### Granting Privileges
+
+<CodeGroup>
+```sql Database Privileges
+-- Grant all privileges on database
+GRANT ALL ON DATABASE mydb TO developers;
+
+-- Grant specific privileges
+GRANT CREATE, DROP ON DATABASE mydb TO developers;
+
+-- Grant read-only access
+GRANT SELECT ON DATABASE mydb TO analysts;
+```
+
+```sql Table Privileges
+-- Grant table access
+GRANT SELECT, INSERT, UPDATE ON TABLE mydb.users TO app_writers;
+
+-- Grant all privileges on all tables in schema
+GRANT ALL ON TABLE mydb.* TO developers;
+
+-- Grant specific column access
+GRANT SELECT (id, name) ON TABLE mydb.users TO analysts;
+```
+
+```sql System Privileges
+-- Grant admin privileges
+GRANT admin TO developers;
+
+-- Grant backup/restore privileges
+GRANT BACKUP TO app_writers;
+GRANT RESTORE TO developers;
+
+-- Grant connection management
+GRANT VIEWACTIVITY TO analysts;
+GRANT CANCELQUERY TO developers;
+```
+</CodeGroup>
+
+### Assigning Users to Roles
+
+```sql Assign Roles to Users
+GRANT developers TO alice, bob;
+GRANT analysts TO charlie;
+GRANT app_writers TO app_service_account;
+```
+
+### Viewing Privileges
+
+```sql Show User Grants
+SHOW GRANTS ON DATABASE mydb;
+SHOW GRANTS ON TABLE mydb.users;
+SHOW GRANTS FOR alice;
+```
+
+### Revoking Privileges
+
+```sql Revoke Access
+REVOKE INSERT, UPDATE ON TABLE mydb.users FROM app_writers;
+REVOKE developers FROM bob;
+```
+
+## Network Security
+
+### Firewall Configuration
+
+Configure firewalls to allow only necessary traffic:
+
+<Accordion title="Required Ports">
+- **26257**: Inter-node and client SQL connections (TCP)
+- **8080**: Admin UI and HTTP endpoints (TCP)
+- **26258**: Internal communication (TCP, optional)
+
+**Firewall Rules:**
+- Allow port 26257 from application servers to database nodes
+- Allow port 26257 between all database nodes
+- Restrict port 8080 to admin networks only
+- Block all other inbound traffic
+</Accordion>
+
+### Connection Security
+
+```sql Enforce SSL Connections
+SET CLUSTER SETTING server.host_based_authentication.configuration = 
+'host all all all cert-password';
+```
+
+### Bind Address Configuration
+
+```bash Restrict Listening Address
+cockroach start \
+  --certs-dir=certs \
+  --listen-addr=10.0.0.1:26257 \
+  --http-addr=10.0.0.1:8080 \
+  --advertise-addr=node1.example.com:26257
+```
+
+<Note>
+Use `--listen-addr` to bind to specific network interfaces. Never use `0.0.0.0` in production unless behind a firewall.
+</Note>
+
+## Encryption at Rest
+
+Enable encryption for data stored on disk:
+
+```bash Enable Encryption at Rest
+cockroach start \
+  --certs-dir=certs \
+  --store=path=/data,encryption-type=aes-128-gcm,key=/path/to/store.key \
+  --advertise-addr=<node-address> \
+  --join=<join-addresses>
+```
+
+### Managing Encryption Keys
+
+<Steps>
+  <Step title="Generate Store Key">
+    ```bash
+    openssl rand -hex 32 > store.key
+    chmod 600 store.key
+    ```
+  </Step>
+
+  <Step title="Rotate Encryption Keys">
+    Generate a new key and update cluster settings:
+    
+    ```bash
+    openssl rand -hex 32 > store-new.key
+    ```
+    
+    Restart nodes with the new key configuration.
+  </Step>
+</Steps>
+
+## Audit Logging
+
+Enable audit logging for compliance and security monitoring:
+
+```sql Enable Audit Logging
+ALTER TABLE mydb.sensitive_data SET (
+  sql_audit = 'all'
+);
+```
+
+```sql Audit Specific Operations
+ALTER TABLE mydb.users SET (
+  sql_audit = 'read_write'
+);
+```
+
+### Viewing Audit Logs
+
+Audit events are logged to the SQL audit log:
+
+```bash
+tail -f /path/to/cockroach-data/logs/cockroach-sql-audit.log
+```
+
+## Security Best Practices
+
+<Steps>
+  <Step title="Use Certificate Authentication">
+    Prefer certificate-based authentication over passwords for automated systems and inter-service communication.
+  </Step>
+
+  <Step title="Implement Least Privilege">
+    Grant users and applications only the minimum privileges required for their function.
+  </Step>
+
+  <Step title="Rotate Certificates Regularly">
+    Establish a certificate rotation schedule (annually or more frequently) and automate the process.
+  </Step>
+
+  <Step title="Enable Encryption at Rest">
+    Use encryption at rest for all production clusters, especially those handling sensitive data.
+  </Step>
+
+  <Step title="Secure the Admin UI">
+    Restrict Admin UI access to VPN or internal networks and use certificate authentication.
+  </Step>
+
+  <Step title="Monitor Authentication Failures">
+    Set up alerts for repeated authentication failures which may indicate attacks.
+  </Step>
+
+  <Step title="Regular Security Audits">
+    Periodically review user privileges, roles, and access patterns.
+  </Step>
+</Steps>
+
+## Certificate Expiration Monitoring
+
+```sql Check Certificate Expiration
+SELECT 
+  node_id,
+  expiration,
+  expiration - now() AS time_until_expiry
+FROM crdb_internal.node_certificates
+ORDER BY expiration;
+```
+
+<Warning>
+Certificate expiration will cause node failures. Monitor certificate expiration dates and rotate well before expiry.
+</Warning>
+
+## Troubleshooting Security Issues
+
+### Certificate Errors
+
+<CardGroup cols={2}>
+  <Card title="Certificate Not Found">
+    Verify file paths and permissions in `--certs-dir`
+  </Card>
+  <Card title="Certificate Expired">
+    Generate new certificates and distribute to nodes
+  </Card>
+  <Card title="Hostname Mismatch">
+    Recreate certificates with correct hostnames/IPs
+  </Card>
+  <Card title="CA Verification Failed">
+    Ensure all nodes use the same CA certificate
+  </Card>
+</CardGroup>
+
+### Authentication Failures
+
+```sql Check User Permissions
+SHOW GRANTS FOR myuser;
+SHOW ROLES;
+```
+
+```sql Verify User Exists
+SELECT * FROM system.users WHERE username = 'myuser';
+```
+
+## Security Checklist
+
+<Accordion title="Production Security Checklist">
+- [ ] TLS enabled for all connections
+- [ ] Certificate-based authentication configured
+- [ ] Strong passwords enforced (min 12 characters)
+- [ ] Root password login disabled
+- [ ] Principle of least privilege applied to all users
+- [ ] Firewall rules configured to restrict access
+- [ ] Encryption at rest enabled
+- [ ] Audit logging enabled for sensitive tables
+- [ ] Certificate expiration monitoring in place
+- [ ] Regular security audits scheduled
+- [ ] Admin UI access restricted to internal networks
+- [ ] Backup encryption enabled
+- [ ] Connection strings secured (no hardcoded passwords)
+- [ ] Network segregation between tiers
+</Accordion>
+
+## Next Steps
+
+<CardGroup cols={3}>
+  <Card title="Backup & Restore" icon="floppy-disk" href="./backup-restore">
+    Secure your backup strategy
+  </Card>
+  <Card title="Migration" icon="right-left" href="./migration">
+    Securely migrate data
+  </Card>
+  <Card title="Upgrade" icon="arrow-up" href="./upgrade">
+    Upgrade with security in mind
+  </Card>
+</CardGroup>

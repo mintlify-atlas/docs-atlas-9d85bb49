@@ -1,0 +1,472 @@
+---
+title: Query Tuning and EXPLAIN
+description: Use EXPLAIN to analyze and optimize SQL query performance
+---
+
+## Overview
+
+The `EXPLAIN` statement shows how CockroachDB executes a query, including the query plan, distribution strategy, and cost estimates. Understanding EXPLAIN output is essential for query optimization.
+
+## EXPLAIN Variants
+
+CockroachDB provides several EXPLAIN modes for different analysis needs.
+
+<CodeGroup>
+```sql Basic EXPLAIN
+-- Shows logical query plan
+EXPLAIN SELECT * FROM orders WHERE customer_id = 'cust123';
+```
+
+```sql EXPLAIN ANALYZE
+-- Executes query and shows actual runtime statistics
+EXPLAIN ANALYZE SELECT * FROM orders WHERE customer_id = 'cust123';
+```
+
+```sql EXPLAIN (VERBOSE)
+-- Shows detailed plan with column information
+EXPLAIN (VERBOSE) SELECT * FROM orders WHERE customer_id = 'cust123';
+```
+
+```sql EXPLAIN (DISTSQL)
+-- Shows distributed execution plan as visual diagram
+EXPLAIN (DISTSQL) SELECT o.*, c.name 
+FROM orders o 
+JOIN customers c ON o.customer_id = c.id;
+```
+</CodeGroup>
+
+## Understanding EXPLAIN Output
+
+### Basic Plan Structure
+
+A typical EXPLAIN output shows a tree of operators:
+
+```sql
+EXPLAIN SELECT id, total FROM orders WHERE status = 'pending' ORDER BY created_at DESC LIMIT 10;
+```
+
+```
+  distribution: local
+  vectorized: true
+
+  • limit
+  │ count: 10
+  │
+  └── • sort
+      │ order: -created_at
+      │
+      └── • scan
+            table: orders@idx_status_created
+            spans: [/'pending' - /'pending']
+```
+
+<Steps>
+  <Step title="Read from bottom to top">
+    Execution flows from the leaf nodes (table scans) up to the root.
+  </Step>
+  
+  <Step title="Identify scan operators">
+    Look for `scan`, `index join`, and `lookup join` operators that access data.
+  </Step>
+  
+  <Step title="Check distribution">
+    `distribution: local` means single-node, `distribution: full` means distributed across cluster.
+  </Step>
+  
+  <Step title="Verify vectorization">
+    `vectorized: true` indicates columnar execution (faster).
+  </Step>
+</Steps>
+
+### Scan Operations
+
+#### Full Table Scan
+
+Reads all rows in a table - avoid when possible.
+
+```sql
+EXPLAIN SELECT * FROM orders;
+```
+
+```
+  • scan
+    table: orders@orders_pkey
+    spans: FULL SCAN
+```
+
+<Warning>
+Full scans are inefficient for large tables. Add indexes or filters to limit rows scanned.
+</Warning>
+
+#### Index Scan
+
+Uses an index to efficiently locate rows.
+
+```sql
+EXPLAIN SELECT * FROM orders WHERE customer_id = 'cust123';
+```
+
+```
+  • scan
+    table: orders@idx_customer
+    spans: [/'cust123' - /'cust123']
+```
+
+#### Index-Only Scan (Covering Index)
+
+Reads all data from index without accessing table.
+
+```sql
+CREATE INDEX idx_customer_total ON orders (customer_id) STORING (total);
+
+EXPLAIN SELECT customer_id, total FROM orders WHERE customer_id = 'cust123';
+```
+
+```
+  • scan
+    table: orders@idx_customer_total
+    spans: [/'cust123' - /'cust123']
+```
+
+<Tip>
+Covering indexes are fastest - they avoid the index join lookup step.
+</Tip>
+
+### JOIN Operations
+
+#### Hash Join
+
+Builds hash table of one side, probes with other side.
+
+```sql
+EXPLAIN SELECT o.id, c.name 
+FROM orders o 
+JOIN customers c ON o.customer_id = c.id;
+```
+
+```
+  • hash join
+  │ equality: (customer_id) = (id)
+  │
+  ├── • scan
+  │     table: orders@orders_pkey
+  │
+  └── • scan
+        table: customers@customers_pkey
+```
+
+#### Lookup Join
+
+Uses index lookups to join tables - efficient for selective joins.
+
+```sql
+EXPLAIN SELECT o.id, c.name 
+FROM orders o 
+INNER LOOKUP JOIN customers c ON o.customer_id = c.id
+WHERE o.created_at > NOW() - INTERVAL '1 hour';
+```
+
+```
+  • lookup join
+  │ table: customers@customers_pkey
+  │ equality: (customer_id) = (id)
+  │
+  └── • scan
+        table: orders@idx_created_at
+        spans: [/2024-03-03T10:00:00 - ]
+```
+
+#### Merge Join
+
+Joins two sorted inputs - efficient when both sides are already sorted.
+
+```sql
+EXPLAIN SELECT o.id, p.name 
+FROM orders o 
+JOIN products p ON o.product_id = p.id
+ORDER BY o.product_id;
+```
+
+```
+  • merge join
+  │ equality: (product_id) = (id)
+  │ left ordering: +product_id
+  │ right ordering: +id
+  │
+  ├── • scan
+  │     table: orders@idx_product
+  │
+  └── • scan
+        table: products@products_pkey
+```
+
+## EXPLAIN ANALYZE: Runtime Statistics
+
+`EXPLAIN ANALYZE` executes the query and shows actual performance metrics.
+
+```sql
+EXPLAIN ANALYZE SELECT COUNT(*) FROM orders WHERE status = 'pending';
+```
+
+```
+  distribution: local
+  vectorized: true
+
+  • group (scalar)
+  │ actual row count: 1
+  │
+  └── • scan
+        table: orders@idx_status
+        spans: [/'pending' - /'pending']
+        actual row count: 1,247
+        KV time: 15.2ms
+        KV bytes read: 45KB
+        estimated row count: 1,200
+```
+
+### Key Metrics
+
+- **actual row count**: Rows processed by each operator
+- **KV time**: Time spent in storage layer
+- **KV bytes read**: Amount of data read from disk
+- **estimated row count**: Optimizer's prediction
+
+<Note>
+Compare `actual row count` vs `estimated row count`. Large discrepancies indicate stale statistics.
+</Note>
+
+## Query Optimization Patterns
+
+### Problem: Full Table Scan
+
+**Symptom**: `spans: FULL SCAN` in EXPLAIN output
+
+```sql
+-- Slow: Full table scan
+EXPLAIN SELECT * FROM orders WHERE status = 'pending';
+```
+
+```
+  • scan
+    table: orders@orders_pkey
+    spans: FULL SCAN  -- ⚠️ Problem!
+    estimated row count: 1,000,000
+```
+
+**Solution**: Create an index
+
+```sql
+CREATE INDEX idx_status ON orders (status);
+
+EXPLAIN SELECT * FROM orders WHERE status = 'pending';
+```
+
+```
+  • scan
+    table: orders@idx_status
+    spans: [/'pending' - /'pending']  -- ✓ Index scan
+    estimated row count: 1,200
+```
+
+### Problem: Index Join Overhead
+
+**Symptom**: Separate `index join` step after scan
+
+```sql
+CREATE INDEX idx_customer ON orders (customer_id);
+
+EXPLAIN SELECT customer_id, total, status FROM orders WHERE customer_id = 'cust123';
+```
+
+```
+  • index join
+  │ table: orders@orders_pkey
+  │
+  └── • scan
+        table: orders@idx_customer
+        spans: [/'cust123' - /'cust123']
+```
+
+**Solution**: Use covering index with STORING
+
+```sql
+CREATE INDEX idx_customer_covering ON orders (customer_id) STORING (total, status);
+
+EXPLAIN SELECT customer_id, total, status FROM orders WHERE customer_id = 'cust123';
+```
+
+```
+  • scan
+    table: orders@idx_customer_covering  -- ✓ No index join needed
+    spans: [/'cust123' - /'cust123']
+```
+
+### Problem: Inefficient JOIN Order
+
+**Symptom**: Large table scanned first in join
+
+```sql
+EXPLAIN SELECT o.id, c.name 
+FROM orders o 
+JOIN customers c ON o.customer_id = c.id
+WHERE c.country = 'US';
+```
+
+```
+  • hash join
+  │
+  ├── • scan
+  │     table: orders@orders_pkey
+  │     estimated row count: 10,000,000  -- ⚠️ Large scan
+  │
+  └── • scan
+        table: customers@idx_country
+        spans: [/'US' - /'US']
+        estimated row count: 50,000
+```
+
+**Solution**: Filter before joining
+
+```sql
+-- Create index on customer_id for orders
+CREATE INDEX idx_orders_customer ON orders (customer_id);
+
+EXPLAIN SELECT o.id, c.name 
+FROM customers c
+JOIN orders o ON c.id = o.customer_id
+WHERE c.country = 'US';
+```
+
+```
+  • lookup join
+  │ table: orders@idx_orders_customer
+  │
+  └── • scan
+        table: customers@idx_country
+        spans: [/'US' - /'US']
+        estimated row count: 50,000  -- ✓ Small table first
+```
+
+### Problem: Sorting Large Result Sets
+
+**Symptom**: Separate `sort` operation
+
+```sql
+EXPLAIN SELECT * FROM orders WHERE status = 'pending' ORDER BY created_at DESC;
+```
+
+```
+  • sort
+  │ order: -created_at  -- ⚠️ Expensive sort
+  │
+  └── • scan
+        table: orders@idx_status
+        estimated row count: 100,000
+```
+
+**Solution**: Create index with sort order
+
+```sql
+CREATE INDEX idx_status_created ON orders (status, created_at DESC);
+
+EXPLAIN SELECT * FROM orders WHERE status = 'pending' ORDER BY created_at DESC;
+```
+
+```
+  • scan
+    table: orders@idx_status_created  -- ✓ Pre-sorted by index
+    spans: [/'pending' - /'pending']
+```
+
+## Advanced Analysis
+
+### Statement Bundle
+
+Collect comprehensive diagnostics for a slow query.
+
+```sql
+EXPLAIN ANALYZE (DEBUG) SELECT * FROM orders WHERE customer_id = 'cust123';
+```
+
+This generates a ZIP file with:
+- Query plan
+- Table statistics
+- Schema definitions
+- Trace data
+
+### Query Plan Cache
+
+View cached query plans:
+
+```sql
+SELECT query, plan FROM crdb_internal.statement_statistics
+WHERE query LIKE '%orders%'
+LIMIT 5;
+```
+
+### Index Recommendations
+
+CockroachDB can suggest indexes based on query patterns:
+
+```sql
+EXPLAIN (OPT) SELECT * FROM orders WHERE customer_id = 'cust123' AND status = 'pending';
+```
+
+Look for index recommendations in the output.
+
+## Performance Testing Workflow
+
+<Steps>
+  <Step title="Capture baseline">
+    Run `EXPLAIN ANALYZE` on the original query to capture baseline metrics.
+  </Step>
+  
+  <Step title="Identify bottlenecks">
+    Look for full scans, expensive sorts, or large row counts.
+  </Step>
+  
+  <Step title="Apply optimization">
+    Create indexes, rewrite query, or adjust schema.
+  </Step>
+  
+  <Step title="Verify improvement">
+    Run `EXPLAIN ANALYZE` again and compare metrics.
+  </Step>
+  
+  <Step title="Test at scale">
+    Use realistic data volumes and concurrency levels.
+  </Step>
+</Steps>
+
+## Best Practices
+
+<Tip>
+**EXPLAIN analysis checklist:**
+
+1. ✓ No `FULL SCAN` on large tables
+2. ✓ `vectorized: true` for columnar execution
+3. ✓ Covering indexes to avoid index joins
+4. ✓ Small estimated row counts
+5. ✓ `actual row count` ≈ `estimated row count`
+6. ✓ Selective filters applied early
+7. ✓ Lookup joins instead of hash joins when appropriate
+8. ✓ No unnecessary sort operations
+9. ✓ Distribution strategy matches data locality
+10. ✓ Recent table statistics
+</Tip>
+
+## Common EXPLAIN Flags
+
+```sql
+-- Show detailed type information
+EXPLAIN (TYPES) SELECT * FROM orders;
+
+-- Show optimizer internals
+EXPLAIN (OPT) SELECT * FROM orders;
+
+-- Show distributed SQL visual plan
+EXPLAIN (DISTSQL) SELECT * FROM orders;
+
+-- Combine multiple flags
+EXPLAIN (VERBOSE, TYPES) SELECT * FROM orders;
+```

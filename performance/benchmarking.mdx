@@ -1,0 +1,504 @@
+---
+title: Benchmarking and Load Testing
+description: Tools and methodologies for benchmarking CockroachDB performance
+---
+
+## Overview
+
+Benchmarking helps you understand CockroachDB performance characteristics, capacity planning, and regression testing. This guide covers built-in workload tools and best practices.
+
+## Workload Tool
+
+CockroachDB includes a `workload` CLI tool with several standard benchmark scenarios. The tool is located at `pkg/workload` in the source tree.
+
+### Installation
+
+```bash
+# Build the workload binary
+make bin/workload
+
+# Or use pre-built binary from releases
+wget https://binaries.cockroachdb.com/cockroach-workload-latest.linux-amd64
+chmod +x cockroach-workload-latest.linux-amd64
+mv cockroach-workload-latest.linux-amd64 /usr/local/bin/workload
+```
+
+## Built-in Workloads
+
+### Bank Workload
+
+Simulates a simple banking application with account transfers.
+
+<CodeGroup>
+```bash Initialize
+# Create schema and load data
+workload init bank \
+  --rows=10000 \
+  --payload-bytes=100 \
+  --ranges=10 \
+  'postgresql://root@localhost:26257?sslmode=disable'
+```
+
+```bash Run Workload
+# Run transfer operations
+workload run bank \
+  --duration=5m \
+  --concurrency=10 \
+  --max-rate=500 \
+  --display-every=5s \
+  'postgresql://root@localhost:26257?sslmode=disable'
+```
+</CodeGroup>
+
+**Key parameters:**
+- `--rows`: Number of accounts
+- `--payload-bytes`: Size of payload column
+- `--ranges`: Number of initial range splits
+- `--concurrency`: Number of concurrent workers
+- `--max-rate`: Maximum operations per second (0 = unlimited)
+
+**Schema:**
+```sql
+CREATE TABLE bank (
+  id INT PRIMARY KEY,
+  balance INT,
+  payload STRING,
+  FAMILY (id, balance, payload)
+);
+```
+
+### KV Workload
+
+Generic key-value operations for read/write performance testing.
+
+<CodeGroup>
+```bash Basic KV
+workload init kv \
+  --splits=10 \
+  --cycle-length=10000 \
+  'postgresql://root@localhost:26257?sslmode=disable'
+
+workload run kv \
+  --duration=10m \
+  --concurrency=256 \
+  --read-percent=95 \
+  --batch=100 \
+  'postgresql://root@localhost:26257?sslmode=disable'
+```
+
+```bash Write-Heavy
+# Write-intensive workload
+workload run kv \
+  --read-percent=0 \
+  --concurrency=128 \
+  --batch=10 \
+  --max-block-bytes=1024 \
+  'postgresql://root@localhost:26257?sslmode=disable'
+```
+
+```bash Zipfian Distribution
+# Realistic access patterns with hot keys
+workload run kv \
+  --zipfian \
+  --read-percent=95 \
+  --concurrency=256 \
+  'postgresql://root@localhost:26257?sslmode=disable'
+```
+</CodeGroup>
+
+**Key parameters:**
+- `--read-percent`: Percentage of read operations (0-100)
+- `--batch`: Number of operations per SQL statement
+- `--zipfian`: Use zipfian distribution (some keys accessed more frequently)
+- `--sequential`: Sequential key access pattern
+- `--splits`: Number of range splits
+
+### TPCC Workload
+
+Industry-standard TPC-C benchmark for OLTP performance.
+
+<Warning>
+TPCC initialization can take significant time. For 1000 warehouses, expect 30-60 minutes.
+</Warning>
+
+<CodeGroup>
+```bash Initialize TPCC
+# Initialize with 100 warehouses
+workload init tpcc \
+  --warehouses=100 \
+  --data-loader=import \
+  'postgresql://root@localhost:26257/tpcc?sslmode=disable'
+```
+
+```bash Run TPCC
+workload run tpcc \
+  --warehouses=100 \
+  --active-warehouses=100 \
+  --duration=30m \
+  --ramp=1m \
+  --workers=500 \
+  --max-rate=0 \
+  --wait=false \
+  --display-every=5s \
+  'postgresql://root@localhost:26257/tpcc?sslmode=disable'
+```
+</CodeGroup>
+
+**Key parameters:**
+- `--warehouses`: Number of warehouses (scale factor)
+- `--active-warehouses`: Warehouses actively used during run
+- `--workers`: Number of concurrent workers
+- `--wait`: Include think time between operations
+- `--ramp`: Ramp-up period before full load
+
+**Transaction mix:**
+- New Order: 45%
+- Payment: 43%
+- Order Status: 4%
+- Delivery: 4%
+- Stock Level: 4%
+
+### YCSB Workload
+
+Yahoo! Cloud Serving Benchmark for various access patterns.
+
+<CodeGroup>
+```bash Workload A (Update Heavy)
+# 50% reads, 50% updates
+workload init ycsb \
+  --initial-rows=1000000 \
+  'postgresql://root@localhost:26257?sslmode=disable'
+
+workload run ycsb \
+  --workload=A \
+  --concurrency=256 \
+  --duration=10m \
+  'postgresql://root@localhost:26257?sslmode=disable'
+```
+
+```bash Workload B (Read Heavy)
+# 95% reads, 5% updates
+workload run ycsb \
+  --workload=B \
+  --concurrency=256 \
+  --duration=10m \
+  'postgresql://root@localhost:26257?sslmode=disable'
+```
+
+```bash Workload C (Read Only)
+# 100% reads
+workload run ycsb \
+  --workload=C \
+  --concurrency=512 \
+  --duration=10m \
+  'postgresql://root@localhost:26257?sslmode=disable'
+```
+</CodeGroup>
+
+**Workload types:**
+- **A**: Update heavy (50% read, 50% update)
+- **B**: Read mostly (95% read, 5% update)
+- **C**: Read only (100% read)
+- **D**: Read latest (95% read, 5% insert, zipfian)
+- **E**: Scan short ranges (95% scan, 5% insert)
+- **F**: Read-modify-write (50% read, 50% read-modify-write)
+
+## Benchmarking Best Practices
+
+### Test Environment Setup
+
+<Steps>
+  <Step title="Use production-like hardware">
+    Match CPU, memory, disk, and network specifications.
+  </Step>
+  
+  <Step title="Configure cluster settings">
+    Set replication factor, locality, and resource limits to match production.
+  </Step>
+  
+  <Step title="Warm up the cluster">
+    Run workload for 5-10 minutes before measuring to populate caches.
+  </Step>
+  
+  <Step title="Run multiple iterations">
+    Execute benchmark 3-5 times and report median/average results.
+  </Step>
+  
+  <Step title="Monitor throughout test">
+    Track CPU, memory, disk I/O, and network metrics.
+  </Step>
+</Steps>
+
+### Ramp-Up Period
+
+Always include a ramp-up period to reach steady state:
+
+```bash
+workload run kv \
+  --ramp=2m \
+  --duration=10m \
+  --concurrency=256 \
+  'postgresql://root@localhost:26257?sslmode=disable'
+```
+
+During ramp-up:
+- Connections are established gradually
+- Caches warm up
+- Range splits stabilize
+- Metrics are not included in final results
+
+### Concurrency and Rate Limiting
+
+<Note>
+Adjust concurrency and rate limits based on your use case:
+
+- **Latency testing**: Low concurrency (1-10), measure minimum latency
+- **Throughput testing**: High concurrency (100-1000), measure maximum QPS
+- **Realistic simulation**: Match production concurrency and rate
+</Note>
+
+```bash
+# Latency benchmark: measure best-case latency
+workload run kv \
+  --concurrency=1 \
+  --read-percent=100 \
+  --duration=5m
+
+# Throughput benchmark: find maximum QPS
+workload run kv \
+  --concurrency=512 \
+  --max-rate=0 \
+  --duration=10m
+
+# Rate-limited: simulate production load
+workload run kv \
+  --concurrency=256 \
+  --max-rate=10000 \
+  --duration=30m
+```
+
+## Metrics and Analysis
+
+### Output Format
+
+Workload tool outputs periodic statistics:
+
+```
+  1.0s        0           64.0 ops/s     15.6 ms/op     14.3 ms p50     16.8 ms p95     25.2 ms p99
+  2.0s        0          128.3 ops/s     15.4 ms/op     14.1 ms p50     17.2 ms p95     23.1 ms p99
+  3.0s        0          127.1 ops/s     15.8 ms/op     14.5 ms p50     17.9 ms p95     24.6 ms p99
+```
+
+**Columns:**
+- **Time**: Elapsed time
+- **Errors**: Error count
+- **ops/s**: Operations per second (throughput)
+- **ms/op**: Average latency per operation
+- **p50/p95/p99**: Latency percentiles
+
+### Histogram Export
+
+Export detailed latency histograms for analysis:
+
+```bash
+workload run kv \
+  --duration=10m \
+  --histograms=/tmp/kv-histogram.json \
+  --histogram-export-format=json \
+  'postgresql://root@localhost:26257?sslmode=disable'
+```
+
+Formats available:
+- `json`: HdrHistogram JSON format
+- `openmetrics`: Prometheus-compatible metrics
+
+### Prometheus Integration
+
+Expose metrics for Prometheus scraping:
+
+```bash
+workload run kv \
+  --prometheus-port=2112 \
+  --duration=30m \
+  'postgresql://root@localhost:26257?sslmode=disable'
+```
+
+Access metrics at `http://localhost:2112/metrics`.
+
+## Custom Workloads
+
+Create custom workloads for application-specific testing.
+
+### Using pgbench
+
+Pgbench is PostgreSQL's built-in benchmark tool, compatible with CockroachDB:
+
+```bash
+# Initialize pgbench schema
+pgbench -i -s 100 'postgresql://root@localhost:26257/bench?sslmode=disable'
+
+# Run TPC-B-like benchmark
+pgbench -c 50 -j 10 -T 300 'postgresql://root@localhost:26257/bench?sslmode=disable'
+
+# Custom SQL script
+pgbench -c 50 -j 10 -T 300 -f custom_queries.sql \
+  'postgresql://root@localhost:26257/bench?sslmode=disable'
+```
+
+**Parameters:**
+- `-i`: Initialize (create schema and data)
+- `-s`: Scale factor (number of rows)
+- `-c`: Number of clients
+- `-j`: Number of threads
+- `-T`: Duration in seconds
+- `-f`: Custom SQL script file
+
+### Custom SQL Scripts
+
+Example `custom_queries.sql`:
+
+```sql
+-- Random read
+\set id random(1, 1000000)
+SELECT * FROM accounts WHERE id = :id;
+
+-- Random update
+\set id random(1, 1000000)
+\set amount random(-1000, 1000)
+UPDATE accounts SET balance = balance + :amount WHERE id = :id;
+
+-- Range scan
+\set start_id random(1, 999000)
+SELECT * FROM accounts WHERE id BETWEEN :start_id AND :start_id + 1000;
+```
+
+## Capacity Planning
+
+### Sizing Methodology
+
+<Steps>
+  <Step title="Define requirements">
+    Target QPS, latency percentiles, data volume, growth rate.
+  </Step>
+  
+  <Step title="Run baseline benchmark">
+    Test with representative workload on small cluster.
+  </Step>
+  
+  <Step title="Scale incrementally">
+    Add nodes and observe throughput scaling.
+  </Step>
+  
+  <Step title="Find bottlenecks">
+    Identify limiting resource: CPU, disk I/O, network, memory.
+  </Step>
+  
+  <Step title="Calculate capacity">
+    Project required cluster size for target load with headroom.
+  </Step>
+</Steps>
+
+### Scaling Tests
+
+Test horizontal scalability:
+
+```bash
+# Benchmark with 3 nodes
+workload run kv --duration=10m --concurrency=256 \
+  'postgresql://root@node1:26257,node2:26257,node3:26257?sslmode=disable'
+
+# Add nodes and re-test with 6 nodes
+workload run kv --duration=10m --concurrency=256 \
+  'postgresql://root@node1:26257,...,node6:26257?sslmode=disable'
+
+# Compare throughput scaling
+```
+
+### Resource Utilization
+
+Monitor resource usage during benchmark:
+
+```bash
+# CPU usage per node
+SELECT node_id, cpu_percent FROM crdb_internal.gossip_liveness;
+
+# Memory usage
+SELECT node_id, used_capacity_bytes, available_capacity_bytes 
+FROM crdb_internal.kv_node_status;
+
+# Disk I/O
+# Monitor using OS tools: iostat, iotop, etc.
+```
+
+## Regression Testing
+
+### Continuous Benchmarking
+
+Automated benchmarks to detect performance regressions:
+
+```bash
+#!/bin/bash
+# benchmark.sh - Run nightly performance tests
+
+set -e
+
+# Configuration
+DURATION="30m"
+CONCURRENCY="256"
+OUTPUT_DIR="/var/benchmarks/$(date +%Y%m%d)"
+
+mkdir -p "$OUTPUT_DIR"
+
+# Run benchmarks
+for workload in kv ycsb bank; do
+  echo "Running $workload benchmark..."
+  
+  workload run "$workload" \
+    --duration="$DURATION" \
+    --concurrency="$CONCURRENCY" \
+    --histograms="$OUTPUT_DIR/${workload}-histogram.json" \
+    'postgresql://root@localhost:26257?sslmode=disable' \
+    > "$OUTPUT_DIR/${workload}-output.log" 2>&1
+done
+
+# Compare with baseline
+python compare_benchmarks.py "$OUTPUT_DIR" /var/benchmarks/baseline
+```
+
+### Comparing Results
+
+Key metrics to track:
+
+<Tip>
+**Performance regression indicators:**
+
+- **Throughput decrease**: >10% drop in ops/sec
+- **Latency increase**: >20% increase in P99
+- **Error rate increase**: Any non-zero error rate
+- **Resource usage spike**: >30% increase in CPU/memory
+- **Replication lag**: >1s behind on followers
+</Tip>
+
+## Best Practices Summary
+
+<Note>
+**Benchmarking checklist:**
+
+1. ✓ Use production-equivalent hardware
+2. ✓ Include ramp-up period (1-5 minutes)
+3. ✓ Run for sufficient duration (10+ minutes)
+4. ✓ Test multiple concurrency levels
+5. ✓ Monitor all nodes during test
+6. ✓ Record cluster configuration
+7. ✓ Export histograms for detailed analysis
+8. ✓ Run multiple iterations
+9. ✓ Test read and write workloads separately
+10. ✓ Document results and environment
+</Note>
+
+## Additional Resources
+
+- [CockroachDB Workload Source](https://github.com/cockroachdb/cockroach/tree/master/pkg/workload)
+- [TPC-C Specification](http://www.tpc.org/tpcc/)
+- [YCSB Benchmark Suite](https://github.com/brianfrankcooper/YCSB)
+- [Performance Tuning Guide](/performance/optimization)

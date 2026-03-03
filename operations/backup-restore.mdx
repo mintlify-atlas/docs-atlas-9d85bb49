@@ -1,0 +1,413 @@
+---
+title: Backup and Restore
+description: Implement comprehensive backup and restore strategies for CockroachDB
+---
+
+CockroachDB provides enterprise-grade backup and restore capabilities to protect your data. Learn how to create full and incremental backups, schedule automated backups, and restore data when needed.
+
+## Backup Types
+
+<CardGroup cols={2}>
+  <Card title="Full Backup" icon="database">
+    Complete snapshot of all data at a specific point in time
+  </Card>
+  <Card title="Incremental Backup" icon="layer-group">
+    Only changes since the last backup, reducing time and storage
+  </Card>
+  <Card title="Revision History" icon="clock-rotate-left">
+    Point-in-time recovery with historical data versions
+  </Card>
+  <Card title="Scheduled Backups" icon="calendar-check">
+    Automated backups running on a regular schedule
+  </Card>
+</CardGroup>
+
+## Creating Backups
+
+### Full Database Backup
+
+Create a complete backup of your entire database:
+
+```sql Full Cluster Backup
+BACKUP INTO 's3://my-bucket/backups?AWS_ACCESS_KEY_ID=xxx&AWS_SECRET_ACCESS_KEY=xxx';
+```
+
+```sql Specific Database Backup
+BACKUP DATABASE mydb 
+INTO 's3://my-bucket/backups/mydb?AWS_ACCESS_KEY_ID=xxx&AWS_SECRET_ACCESS_KEY=xxx';
+```
+
+```sql Table-Level Backup
+BACKUP TABLE mydb.users, mydb.orders 
+INTO 's3://my-bucket/backups/tables?AWS_ACCESS_KEY_ID=xxx&AWS_SECRET_ACCESS_KEY=xxx';
+```
+
+<Note>
+Full backups create a new backup in the specified location. Use `BACKUP INTO LATEST` for incremental backups.
+</Note>
+
+### Incremental Backups
+
+Create incremental backups to capture only changes since the last backup:
+
+```sql Incremental Backup
+BACKUP INTO LATEST IN 's3://my-bucket/backups?AWS_ACCESS_KEY_ID=xxx&AWS_SECRET_ACCESS_KEY=xxx';
+```
+
+<Steps>
+  <Step title="Create Initial Full Backup">
+    ```sql
+    BACKUP INTO 's3://my-bucket/backups?AWS_ACCESS_KEY_ID=xxx&AWS_SECRET_ACCESS_KEY=xxx';
+    ```
+  </Step>
+
+  <Step title="Create First Incremental">
+    ```sql
+    BACKUP INTO LATEST IN 's3://my-bucket/backups?AWS_ACCESS_KEY_ID=xxx&AWS_SECRET_ACCESS_KEY=xxx';
+    ```
+  </Step>
+
+  <Step title="Continue Incrementals">
+    Run the same `BACKUP INTO LATEST` command periodically to create a chain of incremental backups.
+  </Step>
+</Steps>
+
+## Backup Destinations
+
+CockroachDB supports multiple storage backends for backups:
+
+<CodeGroup>
+```sql Amazon S3
+BACKUP DATABASE mydb 
+INTO 's3://bucket-name/path?AWS_ACCESS_KEY_ID=xxx&AWS_SECRET_ACCESS_KEY=xxx&AWS_REGION=us-east-1';
+```
+
+```sql Google Cloud Storage
+BACKUP DATABASE mydb 
+INTO 'gs://bucket-name/path?AUTH=specified&CREDENTIALS=base64-encoded-key';
+```
+
+```sql Azure Blob Storage
+BACKUP DATABASE mydb 
+INTO 'azure://bucket-name/path?AZURE_ACCOUNT_NAME=xxx&AZURE_ACCOUNT_KEY=xxx';
+```
+
+```sql Local/Network Storage
+BACKUP DATABASE mydb 
+INTO 'nodelocal://1/backups';
+```
+
+```sql HTTP(S) Storage
+BACKUP DATABASE mydb 
+INTO 'https://storage.example.com/backups';
+```
+</CodeGroup>
+
+<Warning>
+`nodelocal://` is only suitable for development. Use cloud storage for production backups to ensure durability and accessibility.
+</Warning>
+
+## Scheduled Backups
+
+Automate backups with schedules:
+
+```sql Create Backup Schedule
+CREATE SCHEDULE daily_backup
+FOR BACKUP DATABASE mydb 
+INTO 's3://my-bucket/scheduled-backups?AWS_ACCESS_KEY_ID=xxx&AWS_SECRET_ACCESS_KEY=xxx'
+RECURRING '@daily'
+FULL BACKUP '@weekly'
+WITH SCHEDULE OPTIONS first_run = 'now';
+```
+
+### Schedule Options
+
+<Accordion title="Common Schedule Expressions">
+- `@hourly`: Every hour
+- `@daily`: Every day at midnight UTC
+- `@weekly`: Every Sunday at midnight UTC
+- `'*/15 * * * *'`: Every 15 minutes (cron format)
+- `'0 2 * * *'`: Every day at 2 AM UTC
+- `'0 0 * * 0'`: Every Sunday at midnight UTC
+</Accordion>
+
+### Managing Schedules
+
+```sql View All Schedules
+SHOW SCHEDULES;
+```
+
+```sql Pause a Schedule
+PAUSE SCHEDULE 123456;
+```
+
+```sql Resume a Schedule
+RESUME SCHEDULE 123456;
+```
+
+```sql Alter a Schedule
+ALTER BACKUP SCHEDULE 123456 SET RECURRING '@hourly';
+```
+
+```sql Drop a Schedule
+DROP SCHEDULE 123456;
+```
+
+## Backup Options
+
+Enhance your backups with additional options:
+
+```sql Backup with Revision History
+BACKUP DATABASE mydb 
+INTO 's3://my-bucket/backups?AWS_ACCESS_KEY_ID=xxx&AWS_SECRET_ACCESS_KEY=xxx'
+WITH revision_history;
+```
+
+<Note>
+Revision history enables point-in-time restore (PITR) capabilities, allowing you to restore to any moment within the backup's coverage.
+</Note>
+
+```sql Encrypted Backup
+BACKUP DATABASE mydb 
+INTO 's3://my-bucket/backups?AWS_ACCESS_KEY_ID=xxx&AWS_SECRET_ACCESS_KEY=xxx'
+WITH encryption_passphrase = 'my-secret-passphrase';
+```
+
+```sql Detached Backup
+BACKUP DATABASE mydb 
+INTO 's3://my-bucket/backups?AWS_ACCESS_KEY_ID=xxx&AWS_SECRET_ACCESS_KEY=xxx'
+WITH detached;
+```
+
+<CardGroup cols={2}>
+  <Card title="revision_history">
+    Captures historical versions of data for point-in-time recovery
+  </Card>
+  <Card title="encryption_passphrase">
+    Encrypts backup data for security compliance
+  </Card>
+  <Card title="detached">
+    Returns immediately without waiting for backup completion
+  </Card>
+  <Card title="execution_locality">
+    Runs backup on specific nodes based on locality
+  </Card>
+</CardGroup>
+
+## Restoring from Backups
+
+### Full Database Restore
+
+```sql Restore Entire Cluster
+RESTORE FROM LATEST IN 's3://my-bucket/backups?AWS_ACCESS_KEY_ID=xxx&AWS_SECRET_ACCESS_KEY=xxx';
+```
+
+```sql Restore Specific Database
+RESTORE DATABASE mydb 
+FROM LATEST IN 's3://my-bucket/backups?AWS_ACCESS_KEY_ID=xxx&AWS_SECRET_ACCESS_KEY=xxx';
+```
+
+```sql Restore Specific Tables
+RESTORE TABLE mydb.users, mydb.orders 
+FROM LATEST IN 's3://my-bucket/backups?AWS_ACCESS_KEY_ID=xxx&AWS_SECRET_ACCESS_KEY=xxx';
+```
+
+<Warning>
+Restore operations replace existing data. The target database or tables must not exist unless using specific restore options.
+</Warning>
+
+### Point-in-Time Restore
+
+Restore to a specific timestamp using revision history:
+
+```sql PITR Restore
+RESTORE DATABASE mydb 
+FROM LATEST IN 's3://my-bucket/backups?AWS_ACCESS_KEY_ID=xxx&AWS_SECRET_ACCESS_KEY=xxx'
+AS OF SYSTEM TIME '2024-01-15 14:30:00';
+```
+
+<Steps>
+  <Step title="Identify Target Time">
+    Determine the exact timestamp to restore to, either from application logs or monitoring data.
+  </Step>
+
+  <Step title="Verify Backup Coverage">
+    Ensure your backup with revision history covers the desired timestamp:
+    
+    ```sql
+    SHOW BACKUP FROM LATEST IN 's3://my-bucket/backups?AWS_ACCESS_KEY_ID=xxx&AWS_SECRET_ACCESS_KEY=xxx';
+    ```
+  </Step>
+
+  <Step title="Execute PITR Restore">
+    ```sql
+    RESTORE DATABASE mydb 
+    FROM LATEST IN 's3://my-bucket/backups?AWS_ACCESS_KEY_ID=xxx&AWS_SECRET_ACCESS_KEY=xxx'
+    AS OF SYSTEM TIME '2024-01-15 14:30:00';
+    ```
+  </Step>
+</Steps>
+
+### Restore Options
+
+```sql Restore to Different Database
+RESTORE DATABASE mydb 
+FROM LATEST IN 's3://my-bucket/backups?AWS_ACCESS_KEY_ID=xxx&AWS_SECRET_ACCESS_KEY=xxx'
+WITH into_db = 'mydb_restored';
+```
+
+```sql Restore with Decryption
+RESTORE DATABASE mydb 
+FROM LATEST IN 's3://my-bucket/backups?AWS_ACCESS_KEY_ID=xxx&AWS_SECRET_ACCESS_KEY=xxx'
+WITH encryption_passphrase = 'my-secret-passphrase';
+```
+
+```sql Skip Missing Foreign Keys
+RESTORE TABLE mydb.orders 
+FROM LATEST IN 's3://my-bucket/backups?AWS_ACCESS_KEY_ID=xxx&AWS_SECRET_ACCESS_KEY=xxx'
+WITH skip_missing_foreign_keys;
+```
+
+## Viewing Backup Details
+
+```sql List Backups in Location
+SHOW BACKUPS IN 's3://my-bucket/backups?AWS_ACCESS_KEY_ID=xxx&AWS_SECRET_ACCESS_KEY=xxx';
+```
+
+```sql Show Backup Contents
+SHOW BACKUP FROM LATEST IN 's3://my-bucket/backups?AWS_ACCESS_KEY_ID=xxx&AWS_SECRET_ACCESS_KEY=xxx';
+```
+
+```sql Check Backup Validity
+SHOW BACKUP VALIDATE FROM LATEST IN 's3://my-bucket/backups?AWS_ACCESS_KEY_ID=xxx&AWS_SECRET_ACCESS_KEY=xxx';
+```
+
+## Monitoring Backup Jobs
+
+```sql View Running Jobs
+SHOW JOBS 
+WHERE job_type IN ('BACKUP', 'RESTORE') 
+  AND status = 'running';
+```
+
+```sql View Job Details
+SELECT 
+  job_id,
+  job_type,
+  description,
+  status,
+  fraction_completed,
+  created,
+  started,
+  finished
+FROM crdb_internal.jobs
+WHERE job_type IN ('BACKUP', 'RESTORE')
+ORDER BY created DESC
+LIMIT 10;
+```
+
+```sql Cancel a Backup Job
+CANCEL JOB 123456789;
+```
+
+## Backup Best Practices
+
+<Steps>
+  <Step title="Use Incremental Backups">
+    Implement a strategy with full weekly backups and daily/hourly incrementals to optimize storage and backup windows.
+  </Step>
+
+  <Step title="Enable Revision History">
+    Use `revision_history` for critical databases to enable point-in-time recovery.
+  </Step>
+
+  <Step title="Encrypt Sensitive Data">
+    Always encrypt backups containing sensitive information using `encryption_passphrase`.
+  </Step>
+
+  <Step title="Test Restores Regularly">
+    Periodically restore backups to a test environment to verify data integrity and restore procedures.
+  </Step>
+
+  <Step title="Distribute Backup Storage">
+    Store backups in a different region or cloud provider than your primary cluster for disaster recovery.
+  </Step>
+
+  <Step title="Automate with Schedules">
+    Use scheduled backups instead of manual processes to ensure consistency and reduce human error.
+  </Step>
+
+  <Step title="Monitor Backup Jobs">
+    Set up alerts for failed backup jobs and monitor backup durations for anomalies.
+  </Step>
+</Steps>
+
+## Backup Strategy Example
+
+<Accordion title="Recommended Enterprise Backup Strategy">
+```sql
+-- Create a schedule for daily incremental backups
+CREATE SCHEDULE production_incremental
+FOR BACKUP DATABASE production 
+INTO 's3://prod-backups/daily?AWS_ACCESS_KEY_ID=xxx&AWS_SECRET_ACCESS_KEY=xxx'
+RECURRING '@daily'
+FULL BACKUP '@weekly'
+WITH revision_history,
+     SCHEDULE OPTIONS first_run = 'now';
+
+-- Create a separate schedule for weekly full backups to long-term storage
+CREATE SCHEDULE production_weekly_archive
+FOR BACKUP DATABASE production 
+INTO 's3://prod-backups-archive/weekly?AWS_ACCESS_KEY_ID=xxx&AWS_SECRET_ACCESS_KEY=xxx'
+RECURRING '@weekly'
+FULL BACKUP ALWAYS
+WITH revision_history,
+     encryption_passphrase = 'archive-encryption-key',
+     SCHEDULE OPTIONS first_run = 'now';
+```
+
+This strategy provides:
+- Daily incremental backups for quick recovery
+- Weekly full backups for long-term retention
+- Revision history for point-in-time recovery
+- Encrypted archive backups for compliance
+</Accordion>
+
+## Troubleshooting
+
+### Backup Failures
+
+<CardGroup cols={2}>
+  <Card title="Permission Errors">
+    Verify cloud storage credentials and IAM permissions
+  </Card>
+  <Card title="Timeout Issues">
+    Increase backup job timeout or split into smaller backups
+  </Card>
+  <Card title="Storage Quota">
+    Check available storage space in backup destination
+  </Card>
+  <Card title="Network Connectivity">
+    Ensure nodes can reach backup storage endpoints
+  </Card>
+</CardGroup>
+
+### Restore Failures
+
+```sql Check Backup Integrity
+SHOW BACKUP VALIDATE FROM LATEST IN 's3://my-bucket/backups?AWS_ACCESS_KEY_ID=xxx&AWS_SECRET_ACCESS_KEY=xxx';
+```
+
+## Next Steps
+
+<CardGroup cols={3}>
+  <Card title="Security" icon="shield-halved" href="./security">
+    Secure your backups and cluster
+  </Card>
+  <Card title="Upgrade" icon="arrow-up" href="./upgrade">
+    Upgrade CockroachDB versions
+  </Card>
+  <Card title="Scaling" icon="chart-line" href="./scaling">
+    Scale your cluster capacity
+  </Card>
+</CardGroup>

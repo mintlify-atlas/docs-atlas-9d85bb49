@@ -1,0 +1,697 @@
+---
+title: Constraints
+description: SQL constraints for data integrity in CockroachDB - PRIMARY KEY, FOREIGN KEY, UNIQUE, CHECK, and more
+---
+
+Constraints enforce data integrity rules at the database level. CockroachDB supports all standard SQL constraints plus additional features for distributed systems.
+
+## Constraint Overview
+
+Constraints ensure data validity and consistency across your database:
+
+- **PRIMARY KEY** - Uniquely identifies each row
+- **FOREIGN KEY** - Enforces referential integrity between tables
+- **UNIQUE** - Ensures column values are unique
+- **CHECK** - Validates values against a condition
+- **NOT NULL** - Prevents null values
+- **DEFAULT** - Provides default values for columns
+
+## PRIMARY KEY Constraint
+
+Every table must have a primary key that uniquely identifies each row.
+
+<Tabs>
+  <Tab title="Single Column">
+    ```sql
+    -- Column-level constraint
+    CREATE TABLE users (
+      id INT PRIMARY KEY,
+      username VARCHAR(50)
+    );
+    
+    -- Table-level constraint
+    CREATE TABLE products (
+      product_id INT,
+      name TEXT,
+      PRIMARY KEY (product_id)
+    );
+    ```
+  </Tab>
+  
+  <Tab title="Composite">
+    ```sql
+    -- Multi-column primary key
+    CREATE TABLE order_items (
+      order_id INT,
+      item_id INT,
+      quantity INT,
+      price DECIMAL(10, 2),
+      PRIMARY KEY (order_id, item_id)
+    );
+    ```
+    
+    <Note>
+    Composite primary keys are useful for junction tables and naturally composite identifiers.
+    </Note>
+  </Tab>
+  
+  <Tab title="Hash Sharded">
+    ```sql
+    -- Hash-sharded primary key to avoid hotspots
+    CREATE TABLE events (
+      event_id UUID PRIMARY KEY USING HASH WITH (bucket_count = 8),
+      event_type TEXT,
+      occurred_at TIMESTAMP
+    );
+    
+    -- With storage parameters
+    CREATE TABLE logs (
+      log_id INT PRIMARY KEY USING HASH,
+      message TEXT
+    ) WITH (sql_stats_automatic_collection_enabled = true);
+    ```
+  </Tab>
+  
+  <Tab title="Named Constraint">
+    ```sql
+    -- Named primary key constraint
+    CREATE TABLE customers (
+      customer_id INT,
+      email VARCHAR(255),
+      CONSTRAINT pk_customers PRIMARY KEY (customer_id)
+    );
+    ```
+  </Tab>
+</Tabs>
+
+### Auto-Incrementing Primary Keys
+
+<Warning>
+Sequential integer primary keys can create hotspots in distributed systems. Consider UUID or hash-sharded keys instead.
+</Warning>
+
+<CodeGroup>
+```sql Using SERIAL
+CREATE TABLE orders (
+  id SERIAL PRIMARY KEY,
+  user_id INT,
+  total DECIMAL(10, 2)
+);
+
+-- SERIAL expands to:
+-- id INT DEFAULT unique_rowid()
+```
+
+```sql Using Sequence
+CREATE SEQUENCE customer_id_seq;
+
+CREATE TABLE customers (
+  id INT PRIMARY KEY DEFAULT nextval('customer_id_seq'),
+  name TEXT
+);
+```
+
+```sql Using UUID (Recommended)
+CREATE TABLE sessions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id INT,
+  created_at TIMESTAMP DEFAULT now()
+);
+```
+</CodeGroup>
+
+## FOREIGN KEY Constraint
+
+Foreign keys enforce referential integrity between tables.
+
+<Tabs>
+  <Tab title="Basic Foreign Key">
+    ```sql
+    CREATE TABLE users (
+      id INT PRIMARY KEY,
+      username VARCHAR(50)
+    );
+    
+    CREATE TABLE orders (
+      id INT PRIMARY KEY,
+      user_id INT REFERENCES users(id),
+      total DECIMAL(10, 2)
+    );
+    
+    -- Table-level syntax
+    CREATE TABLE order_items (
+      order_id INT,
+      item_id INT,
+      product_id INT,
+      FOREIGN KEY (order_id) REFERENCES orders(id)
+    );
+    ```
+  </Tab>
+  
+  <Tab title="Composite Foreign Key">
+    ```sql
+    CREATE TABLE order_items (
+      order_id INT,
+      item_id INT,
+      product_id INT,
+      quantity INT,
+      PRIMARY KEY (order_id, item_id)
+    );
+    
+    CREATE TABLE shipment_items (
+      shipment_id INT,
+      order_id INT,
+      item_id INT,
+      FOREIGN KEY (order_id, item_id) 
+        REFERENCES order_items(order_id, item_id)
+    );
+    ```
+  </Tab>
+  
+  <Tab title="Named Foreign Key">
+    ```sql
+    CREATE TABLE comments (
+      id INT PRIMARY KEY,
+      post_id INT,
+      user_id INT,
+      content TEXT,
+      CONSTRAINT fk_comments_post 
+        FOREIGN KEY (post_id) REFERENCES posts(id),
+      CONSTRAINT fk_comments_user 
+        FOREIGN KEY (user_id) REFERENCES users(id)
+    );
+    ```
+  </Tab>
+</Tabs>
+
+### Referential Actions
+
+Control what happens when referenced rows are updated or deleted.
+
+<CodeGroup>
+```sql ON DELETE CASCADE
+-- Delete child rows when parent is deleted
+CREATE TABLE orders (
+  id INT PRIMARY KEY,
+  user_id INT REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- Deleting a user also deletes their orders
+DELETE FROM users WHERE id = 1;
+```
+
+```sql ON DELETE SET NULL
+-- Set foreign key to NULL when parent is deleted
+CREATE TABLE posts (
+  id INT PRIMARY KEY,
+  author_id INT REFERENCES users(id) ON DELETE SET NULL
+);
+```
+
+```sql ON DELETE SET DEFAULT
+-- Set foreign key to default value
+CREATE TABLE assignments (
+  id INT PRIMARY KEY,
+  user_id INT DEFAULT 0 REFERENCES users(id) ON DELETE SET DEFAULT
+);
+```
+
+```sql ON DELETE RESTRICT
+-- Prevent deletion if children exist (default)
+CREATE TABLE products (
+  id INT PRIMARY KEY,
+  category_id INT REFERENCES categories(id) ON DELETE RESTRICT
+);
+```
+
+```sql ON UPDATE CASCADE
+-- Update child rows when parent key changes
+CREATE TABLE order_items (
+  order_id INT REFERENCES orders(id) 
+    ON UPDATE CASCADE 
+    ON DELETE CASCADE
+);
+```
+</CodeGroup>
+
+<ParamField path="ON DELETE" type="action">
+  Actions: `CASCADE`, `SET NULL`, `SET DEFAULT`, `RESTRICT` (default), `NO ACTION`
+</ParamField>
+
+<ParamField path="ON UPDATE" type="action">
+  Actions: `CASCADE`, `SET NULL`, `SET DEFAULT`, `RESTRICT` (default), `NO ACTION`
+</ParamField>
+
+### Foreign Key Performance
+
+<Warning>
+Foreign key checks can impact write performance in distributed systems. Each foreign key validation requires a read from the referenced table.
+</Warning>
+
+```sql
+-- For better performance, ensure foreign key columns are indexed
+CREATE TABLE orders (
+  id INT PRIMARY KEY,
+  user_id INT REFERENCES users(id)
+);
+
+-- Create index on foreign key column
+CREATE INDEX orders_user_id_idx ON orders (user_id);
+```
+
+## UNIQUE Constraint
+
+Ensures all values in a column or group of columns are unique.
+
+<Tabs>
+  <Tab title="Column-Level">
+    ```sql
+    CREATE TABLE users (
+      id INT PRIMARY KEY,
+      username VARCHAR(50) UNIQUE,
+      email VARCHAR(255) UNIQUE
+    );
+    ```
+  </Tab>
+  
+  <Tab title="Table-Level">
+    ```sql
+    CREATE TABLE users (
+      id INT PRIMARY KEY,
+      username VARCHAR(50),
+      email VARCHAR(255),
+      UNIQUE (username),
+      UNIQUE (email)
+    );
+    ```
+  </Tab>
+  
+  <Tab title="Composite Unique">
+    ```sql
+    CREATE TABLE enrollments (
+      id INT PRIMARY KEY,
+      student_id INT,
+      course_id INT,
+      semester VARCHAR(20),
+      UNIQUE (student_id, course_id, semester)
+    );
+    ```
+  </Tab>
+  
+  <Tab title="Named Unique">
+    ```sql
+    CREATE TABLE products (
+      id INT PRIMARY KEY,
+      sku VARCHAR(50),
+      name TEXT,
+      CONSTRAINT uq_products_sku UNIQUE (sku)
+    );
+    ```
+  </Tab>
+</Tabs>
+
+### UNIQUE Without Index
+
+<CodeGroup>
+```sql Standard UNIQUE (Creates Index)
+CREATE TABLE users (
+  id INT PRIMARY KEY,
+  email VARCHAR(255) UNIQUE
+);
+
+-- This creates a unique index automatically
+```
+
+```sql UNIQUE WITHOUT INDEX
+CREATE TABLE users (
+  id INT PRIMARY KEY,
+  email VARCHAR(255),
+  UNIQUE WITHOUT INDEX (email)
+);
+
+-- No index created, uniqueness checked at write time
+-- Useful when you don't need to query by this column
+```
+</CodeGroup>
+
+## CHECK Constraint
+
+Validates column values against a boolean expression.
+
+<Tabs>
+  <Tab title="Simple Check">
+    ```sql
+    CREATE TABLE products (
+      id INT PRIMARY KEY,
+      name TEXT,
+      price DECIMAL(10, 2) CHECK (price > 0),
+      stock INT CHECK (stock >= 0)
+    );
+    
+    -- This insert fails
+    INSERT INTO products VALUES (1, 'Widget', -10, 5);
+    -- ERROR: check constraint "products_price_check" violated
+    ```
+  </Tab>
+  
+  <Tab title="Named Check">
+    ```sql
+    CREATE TABLE users (
+      id INT PRIMARY KEY,
+      age INT,
+      email VARCHAR(255),
+      CONSTRAINT chk_adult_age CHECK (age >= 18),
+      CONSTRAINT chk_valid_email CHECK (email LIKE '%@%')
+    );
+    ```
+  </Tab>
+  
+  <Tab title="Multi-Column Check">
+    ```sql
+    CREATE TABLE date_ranges (
+      id INT PRIMARY KEY,
+      start_date DATE,
+      end_date DATE,
+      CHECK (end_date > start_date)
+    );
+    
+    CREATE TABLE discounts (
+      id INT PRIMARY KEY,
+      percent_off DECIMAL(5, 2),
+      flat_amount DECIMAL(10, 2),
+      CHECK (
+        (percent_off IS NOT NULL AND flat_amount IS NULL) OR
+        (percent_off IS NULL AND flat_amount IS NOT NULL)
+      )
+    );
+    ```
+  </Tab>
+  
+  <Tab title="Complex Expressions">
+    ```sql
+    CREATE TABLE orders (
+      id INT PRIMARY KEY,
+      status TEXT CHECK (status IN ('pending', 'processing', 'shipped', 'delivered')),
+      total DECIMAL(10, 2),
+      tax DECIMAL(10, 2),
+      CHECK (tax >= 0 AND tax <= total * 0.5)
+    );
+    
+    CREATE TABLE coordinates (
+      id INT PRIMARY KEY,
+      latitude DECIMAL(10, 8),
+      longitude DECIMAL(11, 8),
+      CHECK (latitude BETWEEN -90 AND 90),
+      CHECK (longitude BETWEEN -180 AND 180)
+    );
+    ```
+  </Tab>
+</Tabs>
+
+<Warning>
+CHECK constraints cannot reference other tables or use subqueries. They are evaluated per row only.
+</Warning>
+
+## NOT NULL Constraint
+
+Prevents NULL values in a column.
+
+<CodeGroup>
+```sql Column Definition
+CREATE TABLE users (
+  id INT PRIMARY KEY,
+  username VARCHAR(50) NOT NULL,
+  email VARCHAR(255) NOT NULL,
+  phone VARCHAR(20)  -- nullable
+);
+```
+
+```sql Add NOT NULL
+ALTER TABLE users ALTER COLUMN phone SET NOT NULL;
+
+-- First ensure no NULLs exist:
+UPDATE users SET phone = '' WHERE phone IS NULL;
+ALTER TABLE users ALTER COLUMN phone SET NOT NULL;
+```
+
+```sql Remove NOT NULL
+ALTER TABLE users ALTER COLUMN phone DROP NOT NULL;
+```
+</CodeGroup>
+
+## DEFAULT Constraint
+
+Provides default values when no value is specified.
+
+<Tabs>
+  <Tab title="Constant Defaults">
+    ```sql
+    CREATE TABLE users (
+      id INT PRIMARY KEY,
+      username VARCHAR(50) NOT NULL,
+      status VARCHAR(20) DEFAULT 'active',
+      role VARCHAR(20) DEFAULT 'user',
+      login_count INT DEFAULT 0
+    );
+    
+    -- Uses defaults
+    INSERT INTO users (id, username) VALUES (1, 'alice');
+    ```
+  </Tab>
+  
+  <Tab title="Function Defaults">
+    ```sql
+    CREATE TABLE events (
+      id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      event_type TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ DEFAULT now()
+    );
+    
+    INSERT INTO events (event_type) VALUES ('login');
+    ```
+  </Tab>
+  
+  <Tab title="Expression Defaults">
+    ```sql
+    CREATE TABLE orders (
+      id INT PRIMARY KEY,
+      order_date DATE DEFAULT CURRENT_DATE,
+      expires_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP + INTERVAL '7 days')
+    );
+    ```
+  </Tab>
+  
+  <Tab title="Named Default">
+    ```sql
+    CREATE TABLE products (
+      id INT PRIMARY KEY,
+      price DECIMAL(10, 2),
+      CONSTRAINT def_price DEFAULT 0.00 FOR price
+    );
+    ```
+  </Tab>
+</Tabs>
+
+### Modify Defaults
+
+<CodeGroup>
+```sql Set Default
+ALTER TABLE users ALTER COLUMN status SET DEFAULT 'pending';
+```
+
+```sql Drop Default
+ALTER TABLE users ALTER COLUMN status DROP DEFAULT;
+```
+</CodeGroup>
+
+## ON UPDATE Constraint
+
+Automatically update column values on row updates.
+
+```sql
+CREATE TABLE documents (
+  id INT PRIMARY KEY,
+  content TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- updated_at automatically changes on UPDATE
+UPDATE documents SET content = 'new content' WHERE id = 1;
+```
+
+## Managing Constraints
+
+### Adding Constraints
+
+<CodeGroup>
+```sql Add PRIMARY KEY
+ALTER TABLE users ADD PRIMARY KEY (id);
+
+ALTER TABLE order_items ADD PRIMARY KEY (order_id, item_id);
+```
+
+```sql Add FOREIGN KEY
+ALTER TABLE orders ADD FOREIGN KEY (user_id) REFERENCES users(id);
+
+ALTER TABLE orders ADD CONSTRAINT fk_orders_user 
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
+```
+
+```sql Add UNIQUE
+ALTER TABLE users ADD UNIQUE (email);
+
+ALTER TABLE users ADD CONSTRAINT uq_users_username UNIQUE (username);
+```
+
+```sql Add CHECK
+ALTER TABLE products ADD CHECK (price > 0);
+
+ALTER TABLE products ADD CONSTRAINT chk_positive_stock 
+  CHECK (stock >= 0);
+```
+</CodeGroup>
+
+### Dropping Constraints
+
+<CodeGroup>
+```sql Drop by Name
+ALTER TABLE users DROP CONSTRAINT uq_users_email;
+
+ALTER TABLE orders DROP CONSTRAINT fk_orders_user;
+```
+
+```sql Drop PRIMARY KEY
+ALTER TABLE users DROP CONSTRAINT users_pkey;
+```
+
+```sql Drop with CASCADE
+ALTER TABLE users DROP CONSTRAINT users_pkey CASCADE;
+```
+</CodeGroup>
+
+### Viewing Constraints
+
+<CodeGroup>
+```sql SHOW CONSTRAINTS
+SHOW CONSTRAINTS FROM users;
+
+SHOW CONSTRAINTS FROM my_database.public.orders;
+```
+
+```sql System Catalogs
+SELECT 
+  conname AS constraint_name,
+  contype AS constraint_type,
+  conrelid::regclass AS table_name
+FROM pg_constraint
+WHERE conrelid = 'users'::regclass;
+
+-- Constraint types:
+-- 'p' = PRIMARY KEY
+-- 'f' = FOREIGN KEY
+-- 'u' = UNIQUE
+-- 'c' = CHECK
+```
+
+```sql SHOW CREATE TABLE
+SHOW CREATE TABLE users;
+-- Shows all constraints in the CREATE TABLE statement
+```
+</CodeGroup>
+
+## Constraint Validation
+
+### Immediate vs Deferred
+
+<Note>
+CockroachDB validates constraints immediately by default. Deferred constraint checking is not currently supported.
+</Note>
+
+### Disabling Constraint Checks
+
+<Warning>
+Disabling constraints can lead to data inconsistency. Use only for data migration or repair scenarios.
+</Warning>
+
+```sql
+-- Foreign key constraint checking cannot be disabled in CockroachDB
+-- Instead, drop and recreate the constraint:
+
+ALTER TABLE orders DROP CONSTRAINT fk_orders_user;
+
+-- Perform data operations
+-- ...
+
+-- Recreate constraint with validation
+ALTER TABLE orders ADD CONSTRAINT fk_orders_user 
+  FOREIGN KEY (user_id) REFERENCES users(id);
+```
+
+## Best Practices
+
+<Note>
+**Constraint Best Practices:**
+
+1. **Use PRIMARY KEY on every table** - Essential for CockroachDB's distributed architecture
+2. **Prefer UUID over SERIAL** - Avoids hotspots in distributed systems
+3. **Index foreign key columns** - Improves JOIN and foreign key check performance
+4. **Use CHECK for domain validation** - Enforce business rules at the database level
+5. **Name your constraints** - Makes error messages and maintenance easier
+6. **Use UNIQUE WITHOUT INDEX sparingly** - Only when you don't query by that column
+7. **Consider constraint costs** - Each constraint adds validation overhead on writes
+8. **Use NOT NULL liberally** - Makes data requirements explicit and catches bugs early
+</Note>
+
+## Advanced Constraint Patterns
+
+### Polymorphic Associations
+
+```sql
+-- Comments can belong to posts or photos
+CREATE TABLE comments (
+  id INT PRIMARY KEY,
+  commentable_type TEXT NOT NULL,
+  commentable_id INT NOT NULL,
+  content TEXT,
+  CHECK (commentable_type IN ('Post', 'Photo')),
+  UNIQUE (commentable_type, commentable_id)
+);
+```
+
+### Conditional Constraints
+
+```sql
+CREATE TABLE users (
+  id INT PRIMARY KEY,
+  type TEXT CHECK (type IN ('individual', 'business')),
+  ssn VARCHAR(11),
+  tax_id VARCHAR(20),
+  -- Individuals must have SSN, businesses must have TAX_ID
+  CHECK (
+    (type = 'individual' AND ssn IS NOT NULL) OR
+    (type = 'business' AND tax_id IS NOT NULL)
+  )
+);
+```
+
+### Audit Trail Constraints
+
+```sql
+CREATE TABLE audit_log (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  table_name TEXT NOT NULL,
+  operation TEXT NOT NULL CHECK (operation IN ('INSERT', 'UPDATE', 'DELETE')),
+  changed_by TEXT NOT NULL,
+  changed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CHECK (changed_at <= CURRENT_TIMESTAMP)
+);
+```
+
+## See Also
+
+- [Indexes](/sql/indexes) - Index types and creation
+- [Data Types](/sql/data-types) - Supported SQL data types
+- [Statements](/sql/statements) - ALTER TABLE and constraint DDL
+- [Transactions](/sql/transactions) - Transaction isolation and constraints

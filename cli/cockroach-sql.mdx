@@ -1,0 +1,350 @@
+---
+title: cockroach sql
+description: Open an interactive SQL shell to execute queries against CockroachDB
+---
+
+The `cockroach sql` command opens an interactive SQL shell for executing queries and managing databases.
+
+## Synopsis
+
+```bash
+cockroach sql [options]
+```
+
+## Description
+
+Open an SQL shell running against a CockroachDB database. The shell provides:
+
+- Interactive query execution
+- Statement history and editing
+- Multi-line statement support
+- Transaction management
+- Output formatting options
+
+## Connection Flags
+
+<ParamField path="--host" type="string" default="localhost:26257">
+  Database server host and port to connect to.
+  
+  Can be specified as:
+  - Hostname: `--host=myserver`
+  - Hostname with port: `--host=myserver:26257`
+  - IPv6 address: `--host=[::1]:26257`
+  
+  Environment variable: `COCKROACH_HOST`
+</ParamField>
+
+<ParamField path="--user" type="string" default="root">
+  Database user for authentication.
+  
+  Environment variable: `COCKROACH_USER`
+</ParamField>
+
+<ParamField path="--database" type="string" default="defaultdb">
+  Database to connect to. Can optionally include virtual cluster:
+  
+  ```bash
+  -d mydb
+  -d cluster:mycluster/mydb
+  ```
+  
+  Environment variable: `COCKROACH_DATABASE`
+</ParamField>
+
+<ParamField path="--url" type="string">
+  Connection URL (alternative to individual flags).
+  
+  Format: `postgresql://[user[:password]@]host[:port]/[database][?options]`
+  
+  ```bash
+  --url="postgresql://root@localhost:26257/mydb?sslmode=verify-full"
+  ```
+  
+  Environment variable: `COCKROACH_URL`
+</ParamField>
+
+## Security Flags
+
+<ParamField path="--certs-dir" type="string" default="${HOME}/.cockroach-certs">
+  Path to directory containing client certificates.
+  
+  Required files:
+  - `ca.crt` - CA certificate
+  - `client.<user>.crt` - Client certificate
+  - `client.<user>.key` - Client private key
+</ParamField>
+
+<ParamField path="--insecure" type="boolean" default="false">
+  Connect without TLS encryption.
+  
+  <Warning>
+  Only use `--insecure` for local development. Production clusters must use secure connections.
+  </Warning>
+</ParamField>
+
+## Query Execution Flags
+
+<ParamField path="--execute" type="string" shorthand="-e">
+  Execute SQL statement(s) and exit. Multiple statements separated by semicolons.
+  
+  ```bash
+  cockroach sql --execute="SELECT * FROM users; SHOW TABLES;"
+  ```
+</ParamField>
+
+<ParamField path="--file" type="string" shorthand="-f">
+  Execute SQL statements from a file.
+  
+  ```bash
+  cockroach sql --file=schema.sql
+  ```
+</ParamField>
+
+<ParamField path="--watch" type="duration">
+  Repeat the SQL statement(s) at the specified interval.
+  
+  ```bash
+  cockroach sql -e "SELECT count(*) FROM orders" --watch=5s
+  ```
+</ParamField>
+
+## Output Formatting Flags
+
+<ParamField path="--format" type="string" default="table">
+  Output format for query results.
+  
+  Options:
+  - `table` - ASCII table (default for interactive)
+  - `tsv` - Tab-separated values
+  - `csv` - Comma-separated values
+  - `sql` - SQL statements
+  - `raw` - Raw values without formatting
+  - `records` - One column per line
+  - `html` - HTML table
+  
+  <CodeGroup>
+  ```bash Table Format
+  cockroach sql -e "SELECT * FROM users" --format=table
+  ```
+  
+  ```bash CSV Format
+  cockroach sql -e "SELECT * FROM users" --format=csv
+  ```
+  
+  ```bash TSV Format
+  cockroach sql -e "SELECT * FROM users" --format=tsv
+  ```
+  </CodeGroup>
+</ParamField>
+
+<ParamField path="--set" type="string">
+  Set a client-side option. Can be used multiple times.
+  
+  Common options:
+  - `display_format` - Output format
+  - `errexit` - Exit on error
+  - `echo` - Echo statements before execution
+  
+  ```bash
+  cockroach sql --set=errexit=true --set=echo=true
+  ```
+</ParamField>
+
+## Interactive Shell Commands
+
+When running in interactive mode, these special commands are available:
+
+| Command | Description |
+|---------|-------------|
+| `\q` | Quit the shell |
+| `\!` | Execute shell command |
+| `\set` | Set client option |
+| `\unset` | Unset client option |
+| `\show` | Show current client options |
+| `\?` | Show help on backslash commands |
+| `\d [table]` | Describe table or list all tables |
+| `\dt` | List tables |
+| `\dT` | List types |
+| `\l` | List databases |
+| `\c [database]` | Connect to database |
+| `\echo` | Print arguments to stdout |
+
+## Examples
+
+### Connect to Local Cluster
+
+```bash
+cockroach sql --insecure
+```
+
+### Connect to Secure Cluster
+
+```bash
+cockroach sql \
+  --host=prod-cluster.example.com:26257 \
+  --certs-dir=/path/to/certs \
+  --user=admin \
+  --database=myapp
+```
+
+### Execute Single Statement
+
+```bash
+cockroach sql --insecure -e "CREATE DATABASE mydb;"
+```
+
+### Execute Multiple Statements
+
+```bash
+cockroach sql --insecure -e "
+  CREATE DATABASE mydb;
+  USE mydb;
+  CREATE TABLE users (id INT PRIMARY KEY, name STRING);
+  INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob');
+"
+```
+
+### Run SQL File
+
+```bash
+cockroach sql --insecure --file=schema.sql
+```
+
+### Connect with Full URL
+
+<CodeGroup>
+```bash Insecure
+cockroach sql --url="postgresql://root@localhost:26257/mydb?sslmode=disable"
+```
+
+```bash Secure
+cockroach sql --url="postgresql://admin@prod:26257/myapp?sslmode=verify-full&sslcert=certs/client.admin.crt&sslkey=certs/client.admin.key&sslrootcert=certs/ca.crt"
+```
+</CodeGroup>
+
+### Export Data as CSV
+
+```bash
+cockroach sql --insecure \
+  -e "SELECT * FROM users" \
+  --format=csv > users.csv
+```
+
+### Watch Query Results
+
+```bash
+cockroach sql --insecure \
+  -e "SELECT count(*) FROM active_sessions" \
+  --watch=10s
+```
+
+## Interactive Session Example
+
+```sql
+# Welcome to the CockroachDB SQL shell.
+# All statements must be terminated by a semicolon.
+# To exit, type: \q.
+#
+root@localhost:26257/defaultdb> CREATE DATABASE myapp;
+CREATE DATABASE
+
+root@localhost:26257/defaultdb> \c myapp
+root@localhost:26257/myapp> CREATE TABLE products (
+                         ->   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                         ->   name STRING NOT NULL,
+                         ->   price DECIMAL(10,2)
+                         -> );
+CREATE TABLE
+
+root@localhost:26257/myapp> INSERT INTO products (name, price) 
+                         -> VALUES ('Widget', 9.99), ('Gadget', 19.99);
+INSERT 2
+
+root@localhost:26257/myapp> SELECT * FROM products;
+                   id                  |  name  | price
+---------------------------------------+--------+--------
+  7f9c7e8a-1234-5678-9abc-def012345678 | Widget |  9.99
+  8a0d8f9b-2345-6789-0bcd-ef1234567890 | Gadget | 19.99
+(2 rows)
+
+root@localhost:26257/myapp> \q
+```
+
+## SQL Shell Configuration
+
+### Client-Side Options
+
+Set using `\set` in interactive mode or `--set` flag:
+
+<ParamField path="display_format" type="string" default="table">
+  Output format (table, csv, tsv, html, records, sql, raw)
+</ParamField>
+
+<ParamField path="errexit" type="boolean" default="false">
+  Exit on first error when executing from file or `-e`
+</ParamField>
+
+<ParamField path="echo" type="boolean" default="false">
+  Echo SQL statements before executing
+</ParamField>
+
+<ParamField path="show_times" type="boolean" default="true">
+  Display query execution times
+</ParamField>
+
+### Example Configuration
+
+```bash
+cockroach sql --insecure \
+  --set=errexit=true \
+  --set=echo=true \
+  --set=show_times=false
+```
+
+## Tips and Best Practices
+
+<Note>
+**Interactive Shell Tips:**
+
+1. Use `\?` to see all available backslash commands
+2. Press `Ctrl+C` to cancel current statement input
+3. Use `Ctrl+R` for reverse search through command history
+4. Multi-line statements automatically continue until semicolon
+5. Use `\d tablename` for quick table schema inspection
+</Note>
+
+<Warning>
+**Security Reminders:**
+
+- Never hardcode passwords in scripts
+- Use `~/.pgpass` file for password management
+- Restrict certificate file permissions: `chmod 600 client.*.key`
+- Always use TLS in production (`--certs-dir`, not `--insecure`)
+</Warning>
+
+## Troubleshooting
+
+### Connection Refused
+
+- Verify the server is running: `cockroach node status`
+- Check hostname and port are correct
+- Ensure firewall allows connections on the SQL port
+
+### SSL/Certificate Errors
+
+- Verify certificates exist in `--certs-dir`
+- Check certificate permissions (keys should be 600)
+- Ensure certificates haven't expired
+- Verify CA certificate matches server's CA
+
+### Authentication Failures
+
+- Check username is correct
+- Verify user exists: run as root and query `system.users`
+- Ensure user has appropriate grants
+
+## See Also
+
+- [Start a Cluster](/cli/cockroach-start)
+- [Node Management](/cli/cockroach-node)
+- [Debug Commands](/cli/cockroach-debug)

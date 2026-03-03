@@ -1,0 +1,468 @@
+---
+title: Monitoring
+description: Monitor CockroachDB cluster health, performance metrics, and node status using built-in tools and external systems
+---
+
+## Overview
+
+Monitoring is essential for maintaining healthy CockroachDB clusters. CockroachDB provides multiple monitoring interfaces including the Admin UI, HTTP endpoints, and Prometheus metrics exports for integration with external monitoring systems.
+
+## Admin UI
+
+The Admin UI is a web-based interface for monitoring cluster health and performance.
+
+### Accessing the Admin UI
+
+By default, the Admin UI runs on port 8080:
+
+```bash
+http://localhost:8080
+```
+
+For secure clusters, access requires authentication:
+```bash
+# Create admin user
+CREATE USER admin WITH PASSWORD 'secure_password';
+GRANT admin TO admin;
+```
+
+### Admin UI Features
+
+<Accordion title="Cluster Overview">
+  The overview page displays:
+  - **Node count**: Total nodes in cluster
+  - **Capacity usage**: Storage utilization
+  - **QPS**: Queries per second
+  - **SQL connections**: Active SQL connections
+  - **Replication status**: Under-replicated ranges
+  - **Node health**: Live vs. dead nodes
+</Accordion>
+
+<Accordion title="Metrics Dashboard">
+  Time-series graphs for:
+  - SQL query latency (p50, p99, p99.9)
+  - QPS breakdown (reads vs. writes)
+  - CPU usage per node
+  - Memory usage
+  - Disk I/O (reads, writes, IOPS)
+  - Network throughput
+  - Replication lag
+</Accordion>
+
+<Accordion title="Node Map">
+  Visual representation of:
+  - Node locations (based on locality)
+  - Node health status
+  - Replica distribution
+  - Locality-based organization
+</Accordion>
+
+<Accordion title="Database and Table Details">
+  Per-database and per-table metrics:
+  - Table sizes
+  - Row counts
+  - Read/write activity
+  - Index usage statistics
+  - Replication status
+</Accordion>
+
+## Health Check Endpoints
+
+### Basic Health Check
+
+Simple HTTP health check:
+
+```bash
+curl http://localhost:8080/health
+```
+
+Returns:
+- `200 OK`: Node is healthy
+- `503 Service Unavailable`: Node is unhealthy
+
+### Readiness Check
+
+Check if node is ready to serve traffic:
+
+```bash
+curl http://localhost:8080/health?ready=1
+```
+
+Returns `200 OK` when:
+- Node has joined the cluster
+- Node is not draining
+- Node can communicate with majority of cluster
+
+<Note>
+  Use readiness checks for load balancer health checks and Kubernetes readiness probes.
+</Note>
+
+## Prometheus Metrics
+
+CockroachDB exports metrics in Prometheus format for integration with monitoring systems.
+
+### Metrics Endpoint
+
+Access Prometheus metrics:
+
+```bash
+curl http://localhost:8080/_status/vars
+```
+
+Example output:
+```
+# HELP replicas Number of replicas
+# TYPE replicas gauge
+replicas{store="1"} 142
+
+# HELP capacity_available Available storage capacity
+# TYPE capacity_available gauge  
+capacity_available{store="1"} 95821094912
+
+# HELP sql_conns Number of active SQL connections
+# TYPE sql_conns gauge
+sql_conns 23
+```
+
+### Load Metrics Endpoint
+
+Subset of metrics for lightweight monitoring:
+
+```bash
+curl http://localhost:8080/_status/load
+```
+
+Returns key metrics:
+- CPU usage (user and system)
+- Uptime
+- Query rate
+- Active connections
+
+<Note>
+  The `/_status/load` endpoint is unauthenticated and designed for external load balancers.
+</Note>
+
+### Prometheus Configuration
+
+Configure Prometheus to scrape CockroachDB metrics:
+
+```yaml prometheus.yml
+scrape_configs:
+  - job_name: 'cockroachdb'
+    static_configs:
+      - targets: 
+        - 'node1:8080'
+        - 'node2:8080'
+        - 'node3:8080'
+    metrics_path: '/_status/vars'
+    scrape_interval: 10s
+```
+
+<Steps>
+  <Step title="Add scrape configuration">
+    Edit `prometheus.yml` with CockroachDB node endpoints.
+  </Step>
+
+  <Step title="Reload Prometheus">
+    ```bash
+    curl -X POST http://localhost:9090/-/reload
+    ```
+  </Step>
+
+  <Step title="Verify targets">
+    Check Prometheus UI at `http://localhost:9090/targets`
+  </Step>
+</Steps>
+
+## Key Metrics to Monitor
+
+### Node Health Metrics
+
+<Accordion title="Liveness and Availability">
+  **liveness_livenodes**
+  - Number of live nodes in cluster
+  - Alert if drops below expected count
+  
+  **node_id**
+  - Node identifier
+  - Track node restarts and failures
+  
+  **sys_uptime**
+  - Node uptime in seconds
+  - Detect unexpected restarts
+</Accordion>
+
+### Performance Metrics
+
+<Accordion title="SQL Performance">
+  | Metric | Description | Alert Threshold |
+  |--------|-------------|----------------|
+  | `sql_query_count` | Total queries executed | Monitor trends |
+  | `sql_exec_latency_p50` | Median query latency | > 100ms |
+  | `sql_exec_latency_p99` | 99th percentile latency | > 1s |
+  | `sql_exec_latency_p999` | 99.9th percentile latency | > 5s |
+  | `sql_conns` | Active SQL connections | > 80% of max |
+  | `sql_txn_abort_count` | Transaction aborts | High abort rate |
+</Accordion>
+
+<Accordion title="Storage Metrics">
+  | Metric | Description | Alert Threshold |
+  |--------|-------------|----------------|
+  | `capacity_available` | Available disk space | < 15% free |
+  | `capacity_used` | Used disk space | Monitor trends |
+  | `livedata` | Live data bytes | Track growth |
+  | `sysbytes` | System data bytes | Unexpected growth |
+  | `valbytes` | Value bytes | Monitor trends |
+  | `keybytes` | Key bytes | Monitor trends |
+</Accordion>
+
+<Accordion title="Replication Metrics">
+  | Metric | Description | Alert Threshold |
+  |--------|-------------|----------------|
+  | `ranges_unavailable` | Unavailable ranges | > 0 |
+  | `ranges_underreplicated` | Under-replicated ranges | > 0 for extended time |
+  | `ranges_overreplicated` | Over-replicated ranges | > 0 for extended time |
+  | `replicas` | Total replicas on node | Imbalanced distribution |
+  | `replicas_leaders` | Raft leaders on node | Imbalanced distribution |
+  | `replicas_leaseholders` | Leaseholders on node | Imbalanced distribution |
+</Accordion>
+
+<Accordion title="System Resource Metrics">
+  | Metric | Description | Alert Threshold |
+  |--------|-------------|----------------|
+  | `sys_cpu_user_percent` | User CPU usage | > 80% sustained |
+  | `sys_cpu_sys_percent` | System CPU usage | > 30% sustained |
+  | `sys_rss` | Resident memory | > 90% of max |
+  | `sys_go_allocbytes` | Go allocated memory | Monitor trends |
+  | `sys_host_disk_read_bytes` | Disk read bytes | High I/O wait |
+  | `sys_host_disk_write_bytes` | Disk write bytes | High I/O wait |
+  | `sys_host_net_recv_bytes` | Network bytes received | Bandwidth saturation |
+  | `sys_host_net_send_bytes` | Network bytes sent | Bandwidth saturation |
+</Accordion>
+
+## Monitoring Queries
+
+### SQL-Based Monitoring
+
+CockroachDB provides internal tables for monitoring:
+
+<CodeGroup>
+```sql Node Status
+SELECT 
+  node_id,
+  address,
+  build,
+  started_at,
+  updated_at,
+  is_available,
+  is_live
+FROM crdb_internal.gossip_nodes;
+```
+
+```sql Store Status
+SELECT
+  node_id,
+  store_id,
+  (metrics->>'capacity.available')::INT AS available_bytes,
+  (metrics->>'capacity.used')::INT AS used_bytes,
+  (metrics->>'livedata')::INT AS live_bytes
+FROM crdb_internal.kv_store_status;
+```
+
+```sql Range Problems
+SELECT
+  range_id,
+  start_key,
+  end_key,
+  error_message
+FROM crdb_internal.ranges
+WHERE error_message IS NOT NULL;
+```
+
+```sql Under-replicated Ranges
+SELECT
+  range_id,
+  database_name,
+  table_name,
+  unavailable,
+  under_replicated
+FROM crdb_internal.ranges_no_leases
+WHERE under_replicated = true;
+```
+</CodeGroup>
+
+### Cluster Insights
+
+```sql
+-- Check transaction contention
+SELECT * FROM crdb_internal.cluster_contention_events
+ORDER BY num_contention_events DESC
+LIMIT 10;
+
+-- View active queries
+SELECT 
+  query_id,
+  node_id,
+  user_name,
+  start,
+  query
+FROM crdb_internal.cluster_queries
+WHERE application_name NOT LIKE '$ internal%';
+
+-- Check cluster settings
+SELECT 
+  variable,
+  value,
+  description
+FROM [SHOW ALL CLUSTER SETTINGS]
+WHERE variable LIKE 'sql.defaults%';
+```
+
+## Alerting
+
+### Critical Alerts
+
+Set up alerts for critical conditions:
+
+<Accordion title="Node Unavailability">
+  **Alert**: Node becomes unavailable
+  
+  ```promql
+  up{job="cockroachdb"} == 0
+  ```
+  
+  Response: Investigate node immediately
+</Accordion>
+
+<Accordion title="Unavailable Ranges">
+  **Alert**: Ranges become unavailable
+  
+  ```promql
+  ranges_unavailable > 0
+  ```
+  
+  Response: Check node liveness and network connectivity
+</Accordion>
+
+<Accordion title="Disk Space">
+  **Alert**: Low disk space
+  
+  ```promql
+  (capacity_available / (capacity_available + capacity_used)) < 0.15
+  ```
+  
+  Response: Add storage or scale cluster
+</Accordion>
+
+<Accordion title="High Query Latency">
+  **Alert**: p99 latency exceeds threshold
+  
+  ```promql
+  histogram_quantile(0.99, rate(sql_exec_latency_bucket[5m])) > 1
+  ```
+  
+  Response: Investigate slow queries and resource usage
+</Accordion>
+
+### Warning Alerts
+
+<Accordion title="Under-replicated Ranges">
+  **Alert**: Ranges under-replicated for extended time
+  
+  ```promql
+  ranges_underreplicated > 0
+  ```
+  
+  Duration: 10 minutes
+  
+  Response: Check node capacity and replication
+</Accordion>
+
+<Accordion title="High CPU Usage">
+  **Alert**: Sustained high CPU
+  
+  ```promql
+  sys_cpu_user_percent > 80
+  ```
+  
+  Duration: 5 minutes
+  
+  Response: Analyze workload and consider scaling
+</Accordion>
+
+## Grafana Integration
+
+Visualize CockroachDB metrics with Grafana:
+
+<Steps>
+  <Step title="Add Prometheus data source">
+    Configure Grafana to use Prometheus as a data source.
+  </Step>
+
+  <Step title="Import dashboard">
+    CockroachDB provides official Grafana dashboards. Import dashboard ID or JSON.
+  </Step>
+
+  <Step title="Customize panels">
+    Add custom panels for your specific monitoring needs.
+  </Step>
+</Steps>
+
+### Sample Grafana Queries
+
+```promql
+# Query rate
+rate(sql_query_count[1m])
+
+# p99 latency
+histogram_quantile(0.99, rate(sql_exec_latency_bucket[5m]))
+
+# Available capacity
+sum(capacity_available) by (cluster)
+
+# Active SQL connections
+sum(sql_conns) by (node_id)
+```
+
+## Best Practices
+
+<Accordion title="Monitoring Recommendations">
+  1. **Monitor all nodes**: Don't rely on single node metrics
+  2. **Set up alerting**: Proactive alerts prevent outages
+  3. **Track baselines**: Understand normal behavior
+  4. **Monitor trends**: Capacity planning requires historical data
+  5. **Use external monitoring**: Don't rely solely on internal metrics
+  6. **Test alerts**: Verify alert delivery and runbooks
+  7. **Monitor the monitors**: Ensure monitoring system is healthy
+  8. **Document thresholds**: Record why alert thresholds were chosen
+</Accordion>
+
+## Troubleshooting
+
+### Metrics Not Appearing
+
+- Verify `/_status/vars` endpoint is accessible
+- Check Prometheus scrape configuration
+- Review Prometheus logs for errors
+- Ensure no firewall blocking port 8080
+
+### High Memory Usage
+
+- Check `--cache` and `--max-sql-memory` settings
+- Monitor `sys_rss` and `sys_go_allocbytes`
+- Review query patterns for memory-intensive operations
+- Consider adjusting `GOMEMLIMIT`
+
+### Performance Degradation
+
+- Check CPU and disk I/O metrics
+- Review SQL query latency percentiles
+- Investigate under-replicated or unavailable ranges
+- Analyze slow query log
+- Check for transaction contention
+
+## See Also
+
+- [Metrics and Observability](/admin/metrics) - Detailed metrics reference
+- [Logging](/admin/logging) - Log collection and analysis
+- [Configuration](/admin/configuration) - Performance tuning settings

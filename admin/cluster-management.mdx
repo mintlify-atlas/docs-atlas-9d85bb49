@@ -1,0 +1,324 @@
+---
+title: Cluster Management
+description: Learn how to manage CockroachDB clusters, including initialization, scaling, and cluster-wide operations
+---
+
+## Overview
+
+Cluster management in CockroachDB involves controlling the lifecycle and configuration of your distributed database cluster. This includes initializing new clusters, managing cluster membership, and performing administrative operations across all nodes.
+
+## Cluster Initialization
+
+Before a newly started cluster can accept SQL connections, it must be initialized. This step is required only once per cluster.
+
+<Steps>
+  <Step title="Start the first node">
+    Start your first CockroachDB node with the `--join` flag pointing to the cluster addresses:
+
+    ```bash
+    cockroach start \
+      --insecure \
+      --store=path=/mnt/data \
+      --listen-addr=localhost:26257 \
+      --http-addr=localhost:8080 \
+      --join=localhost:26257,localhost:26258,localhost:26259
+    ```
+  </Step>
+
+  <Step title="Start additional nodes">
+    Start other nodes with the same `--join` configuration:
+
+    ```bash
+    cockroach start \
+      --insecure \
+      --store=path=/mnt/data2 \
+      --listen-addr=localhost:26258 \
+      --http-addr=localhost:8081 \
+      --join=localhost:26257,localhost:26258,localhost:26259
+    ```
+  </Step>
+
+  <Step title="Initialize the cluster">
+    Run the `init` command from any node:
+
+    ```bash
+    cockroach init --insecure --host=localhost:26257
+    ```
+
+    <Note>
+      After initialization, the cluster is ready to accept SQL connections and replicate data.
+    </Note>
+  </Step>
+</Steps>
+
+## Single-Node Clusters
+
+For development or testing, you can start a single-node cluster that automatically initializes:
+
+```bash
+cockroach start-single-node \
+  --insecure \
+  --store=attrs=ssd,path=/mnt/ssd1
+```
+
+<Warning>
+  Single-node clusters have replication disabled (replication factor = 1) and are not suitable for production use.
+</Warning>
+
+## Cluster Membership
+
+### Viewing Active Nodes
+
+List all active nodes in the cluster:
+
+```bash
+cockroach node ls --insecure --host=localhost:26257
+```
+
+This displays node IDs for all running, non-decommissioned members.
+
+### Checking Node Status
+
+View detailed status for all nodes:
+
+<CodeGroup>
+```bash Basic Status
+cockroach node status --insecure --host=localhost:26257
+```
+
+```bash With Ranges
+cockroach node status --ranges --insecure --host=localhost:26257
+```
+
+```bash With Statistics
+cockroach node status --stats --insecure --host=localhost:26257
+```
+
+```bash Complete Status
+cockroach node status --all --insecure --host=localhost:26257
+```
+</CodeGroup>
+
+The status output includes:
+- Node ID, address, and SQL address
+- Build version and start time
+- Locality and node attributes
+- Liveness status (is_available, is_live)
+- Replica counts and range distribution
+- Storage statistics (live bytes, key bytes, value bytes)
+
+### Specific Node Status
+
+Check status for a single node by ID:
+
+```bash
+cockroach node status 3 --insecure --host=localhost:26257
+```
+
+## Join Addresses
+
+The `--join` flag specifies the addresses of nodes to connect to when starting. Best practices:
+
+<Accordion title="Join Flag Best Practices">
+  - Include addresses of 3-5 stable nodes in the cluster
+  - Use the same join list for all nodes
+  - Nodes don't need to be running when specified in `--join`
+  - A node can join itself in the list
+  - Use DNS names or stable IP addresses
+  - For cloud deployments, use load balancer addresses
+</Accordion>
+
+Example with multiple join addresses:
+
+```bash
+cockroach start \
+  --join=node1.example.com:26257,node2.example.com:26257,node3.example.com:26257
+```
+
+## Cluster-Wide Operations
+
+### Setting Cluster Settings
+
+Modify cluster-wide settings via SQL:
+
+```sql
+-- View all cluster settings
+SHOW CLUSTER SETTINGS;
+
+-- View a specific setting
+SHOW CLUSTER SETTING cluster.organization;
+
+-- Modify a setting
+SET CLUSTER SETTING cluster.organization = 'Acme Company';
+
+-- Reset to default
+RESET CLUSTER SETTING cluster.organization;
+```
+
+<Note>
+  Cluster settings are stored in the `system.settings` table and propagate automatically to all nodes.
+</Note>
+
+### Important Cluster Settings
+
+| Setting | Purpose | Default |
+|---------|---------|--------|
+| `cluster.organization` | Organization name for licensing | empty |
+| `server.time_until_store_dead` | Time before a store is considered dead | 5m0s |
+| `kv.range_descriptor_cache.size` | Range descriptor cache size | 64 MiB |
+| `sql.stats.automatic_collection.enabled` | Enable automatic statistics collection | true |
+
+### Checking Cluster Health
+
+Monitor overall cluster health:
+
+```bash
+# Check cluster via HTTP endpoint
+curl http://localhost:8080/health
+
+# Detailed health with checks
+curl http://localhost:8080/health?ready=1
+```
+
+## Cluster Scaling
+
+### Adding Nodes
+
+To add a new node to an existing cluster:
+
+<Steps>
+  <Step title="Start the new node">
+    ```bash
+    cockroach start \
+      --insecure \
+      --store=path=/mnt/data \
+      --join=existing-node:26257 \
+      --advertise-addr=new-node:26257
+    ```
+  </Step>
+
+  <Step title="Verify the node joined">
+    ```bash
+    cockroach node ls --insecure --host=existing-node:26257
+    ```
+  </Step>
+
+  <Step title="Monitor rebalancing">
+    The cluster automatically rebalances data to the new node. Monitor progress in the Admin UI at `http://localhost:8080`.
+  </Step>
+</Steps>
+
+### Removing Nodes
+
+To safely remove a node, use the decommission process described in [Node Operations](/admin/node-operations#decommissioning-nodes).
+
+## Store Management
+
+### Store Specification
+
+Stores are specified using the `--store` flag with the following format:
+
+```bash
+--store=path=/mnt/data1
+--store=type=mem,size=1GiB
+--store=attrs=ssd,path=/mnt/ssd1,size=100GiB
+```
+
+Store attributes:
+- `path`: Directory where data is stored (required for disk stores)
+- `type`: Storage type (`mem` or default disk)
+- `size`: Maximum store size
+- `attrs`: Comma-separated attributes for constraint-based placement
+
+### Multiple Stores Per Node
+
+A single node can have multiple stores:
+
+```bash
+cockroach start \
+  --store=attrs=ssd,path=/mnt/ssd1 \
+  --store=attrs=ssd,path=/mnt/ssd2 \
+  --store=attrs=hdd,path=/mnt/hdd1
+```
+
+<Warning>
+  After a node starts with a store configuration, you cannot change the number or locations of stores without decommissioning the node.
+</Warning>
+
+## Security and Access Control
+
+### Secure Clusters
+
+For production deployments, always use secure mode with certificates:
+
+```bash
+cockroach start \
+  --certs-dir=/path/to/certs \
+  --store=path=/mnt/data \
+  --join=node1:26257,node2:26257,node3:26257
+```
+
+See [Certificate Management](/operations/security#certificate-management) for certificate generation.
+
+### Authentication
+
+Connect to a secure cluster:
+
+```bash
+cockroach sql \
+  --certs-dir=/path/to/certs \
+  --host=localhost:26257
+```
+
+## Locality Configuration
+
+Configure node locality for geo-distributed clusters:
+
+```bash
+cockroach start \
+  --locality=region=us-east,zone=us-east-1a \
+  --join=...
+```
+
+Locality tiers enable:
+- Geo-partitioning of data
+- Follower reads from nearby replicas
+- Topology-aware replica placement
+- Zone-specific constraint configurations
+
+## Best Practices
+
+<Accordion title="Production Cluster Recommendations">
+  1. **Minimum 3 nodes**: Required for fault tolerance
+  2. **Odd number of nodes**: Prevents split-brain scenarios (3, 5, or 7 nodes)
+  3. **Separate failure domains**: Distribute nodes across availability zones
+  4. **Consistent configuration**: Use same version and settings across all nodes
+  5. **Monitor replication**: Ensure ranges maintain target replica counts
+  6. **Regular backups**: Schedule automated backups of critical data
+  7. **Capacity planning**: Monitor storage and plan scaling before hitting limits
+</Accordion>
+
+## Troubleshooting
+
+### Common Issues
+
+**Cluster won't initialize**
+- Verify all nodes can communicate on the specified ports
+- Check that `--join` addresses are correct
+- Ensure no firewall blocking ports 26257 (SQL) and 8080 (HTTP)
+
+**Node can't join cluster**
+- Confirm node can reach addresses in `--join` list
+- Check clock synchronization (nodes must be within 500ms)
+- Verify network connectivity and DNS resolution
+
+**Split-brain detection**
+- CockroachDB prevents split-brain through Raft consensus
+- Requires majority quorum for all operations
+- Monitor liveness and range availability
+
+## See Also
+
+- [Node Operations](/admin/node-operations) - Node lifecycle management
+- [Configuration](/admin/configuration) - Detailed configuration options
+- [Monitoring](/admin/monitoring) - Cluster health monitoring

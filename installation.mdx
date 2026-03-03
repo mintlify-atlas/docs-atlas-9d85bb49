@@ -1,0 +1,535 @@
+---
+title: "Installation Guide"
+description: "Install CockroachDB using pre-built binaries, Docker, Kubernetes, or build from source"
+---
+
+## Overview
+
+CockroachDB can be installed in multiple ways depending on your environment and requirements. This guide covers all installation methods from development to production deployments.
+
+<CardGroup cols={2}>
+  <Card title="Pre-built Binary" icon="download">
+    Fastest way to get started - download and run
+  </Card>
+  <Card title="Docker" icon="docker">
+    Containerized deployment for any environment
+  </Card>
+  <Card title="Kubernetes" icon="dharmachakra">
+    Cloud-native orchestrated deployment
+  </Card>
+  <Card title="Build from Source" icon="hammer">
+    Compile CockroachDB yourself for customization
+  </Card>
+</CardGroup>
+
+## Installation Methods
+
+<Tabs>
+  <Tab title="Pre-built Binary">
+    ### Download Pre-built Executable
+
+    The simplest installation method - download the binary for your platform:
+
+    <Steps>
+      <Step title="Download for Your Platform">
+        <CodeGroup>
+          ```bash macOS (Intel)
+          curl https://binaries.cockroachdb.com/cockroach-latest.darwin-10.9-amd64.tgz | tar -xz
+          sudo cp -i cockroach-latest.darwin-10.9-amd64/cockroach /usr/local/bin/
+          ```
+
+          ```bash macOS (Apple Silicon)
+          curl https://binaries.cockroachdb.com/cockroach-latest.darwin-11.0-arm64.tgz | tar -xz
+          sudo cp -i cockroach-latest.darwin-11.0-arm64/cockroach /usr/local/bin/
+          ```
+
+          ```bash Linux (x86_64)
+          curl https://binaries.cockroachdb.com/cockroach-latest.linux-amd64.tgz | tar -xz
+          sudo cp -i cockroach-latest.linux-amd64/cockroach /usr/local/bin/
+          ```
+
+          ```bash Linux (ARM64)
+          curl https://binaries.cockroachdb.com/cockroach-latest.linux-arm64.tgz | tar -xz
+          sudo cp -i cockroach-latest.linux-arm64/cockroach /usr/local/bin/
+          ```
+
+          ```powershell Windows
+          # Download from https://binaries.cockroachdb.com/cockroach-latest.windows-6.2-amd64.zip
+          # Extract the archive
+          # Add the directory to your PATH environment variable
+          ```
+        </CodeGroup>
+      </Step>
+
+      <Step title="Verify Installation">
+        ```bash
+        cockroach version
+        ```
+
+        Expected output:
+        ```
+        Build Tag:        v24.3.0
+        Build Time:       2024/11/18 18:00:00
+        Distribution:     CCL
+        Platform:         darwin amd64 (x86_64-apple-darwin)
+        Go Version:       go1.22.0
+        ```
+      </Step>
+
+      <Step title="Install GEOS Library (Optional)">
+        For spatial operations, install the GEOS library:
+
+        <CodeGroup>
+          ```bash macOS
+          brew install geos
+          ```
+
+          ```bash Ubuntu/Debian
+          sudo apt-get install libgeos-dev
+          ```
+
+          ```bash RHEL/CentOS
+          sudo yum install geos geos-devel
+          ```
+        </CodeGroup>
+      </Step>
+    </Steps>
+
+    <Tip>
+    The binary includes all necessary components. Just download, extract, and run!
+    </Tip>
+  </Tab>
+
+  <Tab title="Docker">
+    ### Docker Installation
+
+    Run CockroachDB in a container for easy deployment and isolation:
+
+    <Steps>
+      <Step title="Pull the Docker Image">
+        ```bash
+        docker pull cockroachdb/cockroach:latest
+        ```
+
+        Or specify a version:
+        ```bash
+        docker pull cockroachdb/cockroach:v24.3.0
+        ```
+      </Step>
+
+      <Step title="Start a Single-Node Cluster">
+        ```bash
+        docker run -d \
+          --name=cockroachdb \
+          --hostname=cockroachdb \
+          -p 26257:26257 \
+          -p 8080:8080 \
+          -v cockroach-data:/cockroach/cockroach-data \
+          cockroachdb/cockroach:latest start-single-node --insecure
+        ```
+
+        **Parameters explained:**
+        - `-d`: Run in detached mode
+        - `--name`: Container name
+        - `-p 26257:26257`: SQL port
+        - `-p 8080:8080`: Admin UI port
+        - `-v`: Persistent data volume
+        - `--insecure`: Development mode (use certificates for production)
+      </Step>
+
+      <Step title="Connect to the SQL Shell">
+        ```bash
+        docker exec -it cockroachdb ./cockroach sql --insecure
+        ```
+      </Step>
+
+      <Step title="Multi-Node Docker Setup (Optional)">
+        Use Docker Compose for a local multi-node cluster:
+
+        ```yaml docker-compose.yml
+        version: '3.8'
+        services:
+          roach1:
+            image: cockroachdb/cockroach:latest
+            command: start --insecure --join=roach1,roach2,roach3
+            ports:
+              - "26257:26257"
+              - "8080:8080"
+            volumes:
+              - roach1-data:/cockroach/cockroach-data
+
+          roach2:
+            image: cockroachdb/cockroach:latest
+            command: start --insecure --join=roach1,roach2,roach3
+            volumes:
+              - roach2-data:/cockroach/cockroach-data
+
+          roach3:
+            image: cockroachdb/cockroach:latest
+            command: start --insecure --join=roach1,roach2,roach3
+            volumes:
+              - roach3-data:/cockroach/cockroach-data
+
+          init:
+            image: cockroachdb/cockroach:latest
+            command: init --insecure --host=roach1
+            depends_on:
+              - roach1
+
+        volumes:
+          roach1-data:
+          roach2-data:
+          roach3-data:
+        ```
+
+        Start the cluster:
+        ```bash
+        docker-compose up -d
+        ```
+      </Step>
+    </Steps>
+  </Tab>
+
+  <Tab title="Kubernetes">
+    ### Kubernetes Deployment
+
+    Deploy CockroachDB on Kubernetes for production-grade orchestration:
+
+    <Steps>
+      <Step title="Using Helm (Recommended)">
+        Install the CockroachDB Helm chart:
+
+        ```bash
+        # Add the CockroachDB Helm repository
+        helm repo add cockroachdb https://charts.cockroachdb.com/
+        helm repo update
+
+        # Install CockroachDB
+        helm install my-release cockroachdb/cockroachdb
+        ```
+
+        With custom values:
+        ```bash
+        helm install my-release cockroachdb/cockroachdb \
+          --set statefulset.replicas=3 \
+          --set storage.persistentVolume.size=100Gi \
+          --set tls.enabled=true
+        ```
+      </Step>
+
+      <Step title="Using Kubernetes Operator">
+        The CockroachDB Kubernetes Operator automates deployment and management:
+
+        ```bash
+        # Install the operator
+        kubectl apply -f https://raw.githubusercontent.com/cockroachdb/cockroach-operator/master/install/operator.yaml
+
+        # Create a CockroachDB cluster
+        kubectl apply -f - <<EOF
+        apiVersion: crdb.cockroachlabs.com/v1alpha1
+        kind: CrdbCluster
+        metadata:
+          name: cockroachdb
+        spec:
+          nodes: 3
+          dataStore:
+            pvc:
+              spec:
+                accessModes:
+                  - ReadWriteOnce
+                resources:
+                  requests:
+                    storage: 100Gi
+        EOF
+        ```
+      </Step>
+
+      <Step title="Verify Deployment">
+        ```bash
+        # Check pod status
+        kubectl get pods
+
+        # Access the SQL client
+        kubectl exec -it cockroachdb-0 -- ./cockroach sql --insecure
+
+        # Port-forward to access Admin UI
+        kubectl port-forward cockroachdb-0 8080:8080
+        ```
+      </Step>
+    </Steps>
+
+    <Note>
+    For production Kubernetes deployments, always enable TLS and use secrets management for certificates.
+    </Note>
+  </Tab>
+
+  <Tab title="Build from Source">
+    ### Build from Source
+
+    Build CockroachDB from source for development or customization:
+
+    <Steps>
+      <Step title="Prerequisites">
+        Required tools:
+        - **Go** 1.22 or later
+        - **Bazel** (installed automatically via `./dev`)
+        - **Git**
+        - **C++ compiler** (GCC or Clang)
+        - At least **4GB RAM** for building
+
+        <CodeGroup>
+          ```bash macOS
+          # Install Xcode Command Line Tools
+          xcode-select --install
+
+          # Install Go
+          brew install go
+          ```
+
+          ```bash Ubuntu/Debian
+          sudo apt-get update
+          sudo apt-get install -y build-essential git
+
+          # Install Go from official source
+          wget https://go.dev/dl/go1.22.0.linux-amd64.tar.gz
+          sudo tar -C /usr/local -xzf go1.22.0.linux-amd64.tar.gz
+          export PATH=$PATH:/usr/local/go/bin
+          ```
+
+          ```bash RHEL/CentOS
+          sudo yum groupinstall "Development Tools"
+          sudo yum install git
+
+          # Install Go from official source
+          wget https://go.dev/dl/go1.22.0.linux-amd64.tar.gz
+          sudo tar -C /usr/local -xzf go1.22.0.linux-amd64.tar.gz
+          export PATH=$PATH:/usr/local/go/bin
+          ```
+        </CodeGroup>
+      </Step>
+
+      <Step title="Clone the Repository">
+        ```bash
+        git clone https://github.com/cockroachdb/cockroach.git
+        cd cockroach
+        ```
+      </Step>
+
+      <Step title="Build CockroachDB">
+        Use the `./dev` tool (recommended):
+
+        ```bash
+        # Build the full cockroach binary with UI
+        ./dev build cockroach
+
+        # Or build without UI (faster)
+        ./dev build short
+        ```
+
+        Using make (alternative):
+        ```bash
+        make build
+        ```
+
+        <Warning>
+        Building CockroachDB can take 20-30 minutes depending on your system. Be patient!
+        </Warning>
+      </Step>
+
+      <Step title="Build GEOS Library">
+        For spatial functionality:
+
+        ```bash
+        ./dev build buildgeos
+        ```
+      </Step>
+
+      <Step title="Install the Binary">
+        ```bash
+        # Install to system location
+        make install
+
+        # Or copy manually
+        sudo cp cockroach /usr/local/bin/
+        ```
+      </Step>
+
+      <Step title="Verify the Build">
+        ```bash
+        cockroach version
+        ```
+      </Step>
+    </Steps>
+
+    <Tip>
+    For development, use `./dev build` as it handles dependencies automatically and integrates with Bazel's caching for faster rebuilds.
+    </Tip>
+  </Tab>
+</Tabs>
+
+## Post-Installation Setup
+
+### Directory Structure
+
+CockroachDB stores data in the following structure:
+
+```
+cockroach-data/
+├── auxiliary/         # Auxiliary files
+├── logs/             # Log files
+├── temp-dirs-record/ # Temporary directory tracking
+└── 000001.sst        # RocksDB storage files
+```
+
+### Storage Requirements
+
+Plan for adequate storage:
+
+- **Development**: 10-20GB minimum
+- **Production**: Depends on dataset size
+- **Recommendation**: 3x replication factor means 3x raw data size
+- **Best practice**: Keep 20-30% free disk space
+
+<Warning>
+CockroachDB will refuse to write data when disk space falls below 10% to prevent corruption.
+</Warning>
+
+## Security Setup
+
+For production, always use secure mode with certificates:
+
+<Steps>
+  <Step title="Create CA Certificate">
+    ```bash
+    mkdir certs my-safe-directory
+    cockroach cert create-ca \
+      --certs-dir=certs \
+      --ca-key=my-safe-directory/ca.key
+    ```
+  </Step>
+
+  <Step title="Create Node Certificates">
+    ```bash
+    cockroach cert create-node \
+      localhost \
+      $(hostname) \
+      --certs-dir=certs \
+      --ca-key=my-safe-directory/ca.key
+    ```
+  </Step>
+
+  <Step title="Create Client Certificates">
+    ```bash
+    cockroach cert create-client \
+      root \
+      --certs-dir=certs \
+      --ca-key=my-safe-directory/ca.key
+    ```
+  </Step>
+
+  <Step title="Start in Secure Mode">
+    ```bash
+    cockroach start \
+      --certs-dir=certs \
+      --advertise-addr=localhost:26257 \
+      --http-addr=localhost:8080 \
+      --join=localhost:26257
+    ```
+  </Step>
+</Steps>
+
+## Deployment Options
+
+<CardGroup cols={2}>
+  <Card title="CockroachCloud" icon="cloud" href="https://www.cockroachlabs.com/docs/cockroachcloud/quickstart">
+    Fully managed CockroachDB - let us run it for you
+  </Card>
+  <Card title="Manual Deployment" icon="server" href="https://www.cockroachlabs.com/docs/stable/manual-deployment.html">
+    Deploy on your own infrastructure with full control
+  </Card>
+  <Card title="Cloud Platforms" icon="cloud-upload" href="https://www.cockroachlabs.com/docs/stable/cloud-deployment.html">
+    Deploy on AWS, GCP, Azure, or other cloud providers
+  </Card>
+  <Card title="Orchestration" icon="cubes" href="https://www.cockroachlabs.com/docs/stable/orchestration.html">
+    Use Kubernetes, Terraform, or other orchestration tools
+  </Card>
+</CardGroup>
+
+## Verification Steps
+
+After installation, verify everything works:
+
+```bash
+# Check version
+cockroach version
+
+# Start a test cluster
+cockroach start-single-node --insecure --background
+
+# Run SQL commands
+cockroach sql --insecure -e "SELECT 1;"
+
+# Check cluster status
+cockroach node status --insecure
+
+# Stop the test cluster
+cockroach quit --insecure
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Run your first queries and explore CockroachDB features
+  </Card>
+  <Card title="Production Checklist" icon="list-check" href="https://www.cockroachlabs.com/docs/stable/recommended-production-settings.html">
+    Configure CockroachDB for production workloads
+  </Card>
+  <Card title="Client Drivers" icon="plug" href="https://www.cockroachlabs.com/docs/stable/install-client-drivers.html">
+    Connect your application with PostgreSQL-compatible drivers
+  </Card>
+  <Card title="Cluster Topology" icon="project-diagram" href="https://www.cockroachlabs.com/docs/stable/topology-patterns.html">
+    Design your cluster topology for optimal performance
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Build fails with 'out of memory'">
+    Increase available RAM or build with reduced parallelism:
+
+    ```bash
+    ./dev build cockroach -- --local_ram_resources=2048
+    ```
+  </Accordion>
+
+  <Accordion title="Permission denied errors">
+    Ensure proper permissions for installation:
+
+    ```bash
+    sudo chown -R $(whoami) /usr/local/bin/cockroach
+    ```
+  </Accordion>
+
+  <Accordion title="Port already in use">
+    Find and stop processes using ports 26257 or 8080:
+
+    ```bash
+    # Find process
+    lsof -i :26257
+
+    # Kill process
+    kill -9 <PID>
+    ```
+  </Accordion>
+
+  <Accordion title="Certificate errors in secure mode">
+    Verify certificates are in the correct location and have proper permissions:
+
+    ```bash
+    ls -la certs/
+    cockroach cert list --certs-dir=certs
+    ```
+  </Accordion>
+</AccordionGroup>

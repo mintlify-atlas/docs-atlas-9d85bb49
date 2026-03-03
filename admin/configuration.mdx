@@ -1,0 +1,503 @@
+---
+title: Configuration
+description: Configure CockroachDB nodes and clusters using flags, environment variables, and cluster settings
+---
+
+## Overview
+
+CockroachDB provides multiple configuration mechanisms for controlling node behavior and cluster-wide settings. Configuration can be specified through command-line flags, environment variables, and SQL-based cluster settings.
+
+## Configuration Methods
+
+### Command-Line Flags
+
+Flags are specified when starting a node:
+
+```bash
+cockroach start \
+  --store=path=/mnt/data \
+  --listen-addr=0.0.0.0:26257 \
+  --cache=25% \
+  --max-sql-memory=25%
+```
+
+### Environment Variables
+
+Many flags have corresponding environment variable equivalents:
+
+```bash
+export COCKROACH_INSECURE=true
+export COCKROACH_HOST=localhost:26257
+cockroach sql
+```
+
+### Cluster Settings
+
+Cluster-wide settings are modified via SQL:
+
+```sql
+SET CLUSTER SETTING cluster.organization = 'Acme Company';
+```
+
+## Node Configuration Flags
+
+### Network Configuration
+
+<Accordion title="Listen Addresses">
+  **--listen-addr**
+  
+  The address for inter-node communication:
+  ```bash
+  --listen-addr=0.0.0.0:26257
+  ```
+  
+  Default: `localhost:26257`
+  
+  **--advertise-addr**
+  
+  The address advertised to other nodes:
+  ```bash
+  --advertise-addr=node1.example.com:26257
+  ```
+  
+  **--sql-addr**
+  
+  Separate address for SQL connections:
+  ```bash
+  --sql-addr=0.0.0.0:26258
+  ```
+  
+  **--http-addr**
+  
+  Admin UI and HTTP API address:
+  ```bash
+  --http-addr=0.0.0.0:8080
+  ```
+  
+  Default: `localhost:8080`
+</Accordion>
+
+<Accordion title="Port Configuration">
+  Default ports:
+  - **26257**: SQL and inter-node communication
+  - **8080**: Admin UI and HTTP API
+  
+  Custom ports:
+  ```bash
+  cockroach start \
+    --listen-addr=:26000 \
+    --http-addr=:8000
+  ```
+</Accordion>
+
+### Storage Configuration
+
+<Accordion title="Store Specification">
+  **Basic store:**
+  ```bash
+  --store=path=/mnt/data
+  ```
+  
+  **Store with attributes:**
+  ```bash
+  --store=attrs=ssd,path=/mnt/ssd1
+  ```
+  
+  **Store with size limit:**
+  ```bash
+  --store=path=/mnt/data,size=100GiB
+  ```
+  
+  **Multiple stores:**
+  ```bash
+  --store=attrs=ssd,path=/mnt/ssd1,size=100GiB \
+  --store=attrs=ssd,path=/mnt/ssd2,size=100GiB \
+  --store=attrs=hdd,path=/mnt/hdd1,size=1TiB
+  ```
+  
+  **In-memory store (testing only):**
+  ```bash
+  --store=type=mem,size=1GiB
+  ```
+</Accordion>
+
+### Memory Configuration
+
+<Accordion title="Cache Settings">
+  **--cache**
+  
+  Size of the cache for storing key-value data:
+  
+  ```bash
+  # Absolute size
+  --cache=2GiB
+  
+  # Percentage of system memory
+  --cache=25%
+  ```
+  
+  Default: 128 MiB (or 25% of system memory)
+  
+  The cache stores frequently accessed data to reduce disk I/O.
+</Accordion>
+
+<Accordion title="SQL Memory">
+  **--max-sql-memory**
+  
+  Maximum memory for SQL operations:
+  
+  ```bash
+  # Absolute size
+  --max-sql-memory=4GiB
+  
+  # Percentage of system memory
+  --max-sql-memory=25%
+  ```
+  
+  Default: 128 MiB (or 25% of system memory)
+  
+  Controls memory available for:
+  - Query execution
+  - Sorting operations
+  - Hash joins
+  - Intermediate query results
+</Accordion>
+
+<Accordion title="Go Memory Limit">
+  **--max-go-memory**
+  
+  Go runtime memory limit:
+  
+  ```bash
+  --max-go-memory=8GiB
+  ```
+  
+  Can also use `GOMEMLIMIT` environment variable:
+  ```bash
+  export GOMEMLIMIT=8GiB
+  ```
+</Accordion>
+
+### Locality Configuration
+
+<Accordion title="Locality Tiers">
+  Configure node locality for geo-distributed deployments:
+  
+  ```bash
+  --locality=region=us-east,zone=us-east-1a,rack=rack1
+  ```
+  
+  Common patterns:
+  
+  <CodeGroup>
+  ```bash Cloud Regions
+  --locality=cloud=aws,region=us-east-1,zone=us-east-1a
+  ```
+  
+  ```bash Data Centers
+  --locality=datacenter=dc1,rack=r1,server=s1
+  ```
+  
+  ```bash Hybrid
+  --locality=region=us-east,availability-zone=us-east-1a
+  ```
+  </CodeGroup>
+  
+  Locality enables:
+  - Replica placement preferences
+  - Follower reads from nearby nodes
+  - Geo-partitioning
+  - Latency-based load balancing
+</Accordion>
+
+### Security Configuration
+
+<Accordion title="Certificate Configuration">
+  **Secure mode (production):**
+  ```bash
+  cockroach start \
+    --certs-dir=/path/to/certs \
+    --store=path=/mnt/data
+  ```
+  
+  Required certificates:
+  - `ca.crt`: Certificate authority
+  - `node.crt`: Node certificate
+  - `node.key`: Node private key
+  
+  **Insecure mode (development only):**
+  ```bash
+  cockroach start --insecure
+  ```
+  
+  <Warning>
+    Never use `--insecure` in production. All traffic is unencrypted and unauthenticated.
+  </Warning>
+</Accordion>
+
+### Join Configuration
+
+<Accordion title="Join Addresses">
+  Specify nodes to connect to when starting:
+  
+  ```bash
+  --join=node1:26257,node2:26257,node3:26257
+  ```
+  
+  Best practices:
+  - List 3-5 stable nodes
+  - Use DNS names or stable IPs
+  - Same join list for all nodes
+  - Nodes don't need to be running
+  - Can include self-reference
+  
+  Examples:
+  ```bash
+  # DNS-based
+  --join=cockroach.example.com:26257
+  
+  # Multiple addresses
+  --join=10.0.1.1:26257,10.0.1.2:26257,10.0.1.3:26257
+  
+  # With custom port
+  --join=node1:26000,node2:26000
+  ```
+</Accordion>
+
+## Logging Configuration
+
+### Log Output Configuration
+
+<CodeGroup>
+```bash File Logging
+cockroach start \
+  --log='file-defaults: {dir: /var/log/cockroach}'
+```
+
+```bash Stderr Logging
+cockroach start \
+  --log='sinks: {stderr: {channels: all}}'
+```
+
+```bash Custom Verbosity
+cockroach start \
+  --log='file-defaults: {filter: INFO}'
+```
+</CodeGroup>
+
+### Log Configuration Options
+
+<Accordion title="Log Flags">
+  **--log-dir** (deprecated, use `--log`):
+  ```bash
+  --log-dir=/var/log/cockroach
+  ```
+  
+  Equivalent to:
+  ```bash
+  --log='file-defaults: {dir: /var/log/cockroach}'
+  ```
+  
+  **--log-file-verbosity** (deprecated):
+  ```bash
+  --log-file-verbosity=WARNING
+  ```
+  
+  Equivalent to:
+  ```bash
+  --log='file-defaults: {filter: WARNING}'
+  ```
+  
+  **--log-file-max-size** (deprecated):
+  ```bash
+  --log-file-max-size=10MiB
+  ```
+  
+  Equivalent to:
+  ```bash
+  --log='file-defaults: {max-file-size: 10MiB}'
+  ```
+</Accordion>
+
+See [Logging Configuration](/admin/logging) for comprehensive logging setup.
+
+## Cluster Settings
+
+### Viewing Cluster Settings
+
+<CodeGroup>
+```sql All Settings
+SHOW CLUSTER SETTINGS;
+```
+
+```sql Specific Setting
+SHOW CLUSTER SETTING cluster.organization;
+```
+
+```sql Public Settings Only
+SHOW PUBLIC CLUSTER SETTINGS;
+```
+</CodeGroup>
+
+### Modifying Cluster Settings
+
+```sql
+-- Set a string setting
+SET CLUSTER SETTING cluster.organization = 'Acme Company';
+
+-- Set a numeric setting
+SET CLUSTER SETTING kv.range_descriptor_cache.size = '128MiB';
+
+-- Set a boolean setting
+SET CLUSTER SETTING sql.stats.automatic_collection.enabled = true;
+
+-- Set a duration setting
+SET CLUSTER SETTING server.time_until_store_dead = '5m0s';
+
+-- Reset to default
+RESET CLUSTER SETTING cluster.organization;
+```
+
+### Important Cluster Settings
+
+<Accordion title="Performance Settings">
+  | Setting | Description | Default |
+  |---------|-------------|--------|
+  | `kv.range_descriptor_cache.size` | Range descriptor cache size | 64 MiB |
+  | `kv.raft.command.max_size` | Maximum Raft command size | 64 MiB |
+  | `sql.distsql.distribute_index_joins` | Enable distributed index joins | true |
+  | `sql.stats.automatic_collection.enabled` | Auto-collect table statistics | true |
+</Accordion>
+
+<Accordion title="Replication Settings">
+  | Setting | Description | Default |
+  |---------|-------------|--------|
+  | `kv.snapshot_rebalance.max_rate` | Maximum rebalance rate | 32 MiB/s |
+  | `kv.snapshot_recovery.max_rate` | Maximum recovery rate | 32 MiB/s |
+  | `server.time_until_store_dead` | Store considered dead after | 5m0s |
+</Accordion>
+
+<Accordion title="SQL Settings">
+  | Setting | Description | Default |
+  |---------|-------------|--------|
+  | `sql.defaults.default_int_size` | Default integer size (4 or 8) | 8 |
+  | `sql.defaults.serial_normalization` | Serial type normalization | rowid |
+  | `sql.log.slow_query.latency_threshold` | Log slow queries threshold | 0s (disabled) |
+</Accordion>
+
+<Accordion title="Diagnostics Settings">
+  | Setting | Description | Default |
+  |---------|-------------|--------|
+  | `diagnostics.reporting.enabled` | Enable diagnostic reporting | true |
+  | `cluster.organization` | Organization name | empty |
+  | `enterprise.license` | Enterprise license key | empty |
+</Accordion>
+
+## Environment Variables
+
+### Common Environment Variables
+
+| Variable | Purpose | Example |
+|----------|---------|--------|
+| `COCKROACH_INSECURE` | Enable insecure mode | `export COCKROACH_INSECURE=true` |
+| `COCKROACH_HOST` | Default host | `export COCKROACH_HOST=localhost:26257` |
+| `COCKROACH_CERTS_DIR` | Certificate directory | `export COCKROACH_CERTS_DIR=/certs` |
+| `GOMEMLIMIT` | Go memory limit | `export GOMEMLIMIT=8GiB` |
+| `GOGC` | Go GC percentage | `export GOGC=50` |
+
+### Development Variables
+
+```bash
+# Skip telemetry
+export COCKROACH_SKIP_ENABLING_DIAGNOSTIC_REPORTING=true
+
+# Debug mode
+export COCKROACH_DEBUG_MODE=true
+```
+
+## Configuration Files
+
+CockroachDB does not use traditional configuration files. Instead:
+
+1. **Command-line flags**: Set at node startup
+2. **Cluster settings**: Stored in `system.settings` table
+3. **Environment variables**: Set in shell environment
+
+<Note>
+  To persist configuration, use init scripts or systemd unit files to set flags and environment variables.
+</Note>
+
+## Resource Limits
+
+### File Descriptors
+
+CockroachDB requires high file descriptor limits:
+
+```bash
+# Check current limit
+ulimit -n
+
+# Set limit (requires root)
+ulimit -n 35000
+```
+
+Recommended minimum: **35,000 file descriptors**
+
+Permanent configuration in `/etc/security/limits.conf`:
+```
+cockroach soft nofile 35000
+cockroach hard nofile 35000
+```
+
+### Memory Limits
+
+Recommended memory allocation:
+- **Cache**: 25% of system memory
+- **SQL Memory**: 25% of system memory
+- **Go Runtime**: Remaining system memory
+
+Example for 16GB system:
+```bash
+cockroach start \
+  --cache=4GiB \
+  --max-sql-memory=4GiB \
+  --max-go-memory=8GiB
+```
+
+## Best Practices
+
+<Accordion title="Configuration Recommendations">
+  1. **Document all changes**: Maintain a record of non-default settings
+  2. **Test in staging**: Validate configuration changes before production
+  3. **Use percentages for memory**: Adapts to different hardware
+  4. **Set explicit locality**: Required for geo-distributed deployments
+  5. **Monitor resource usage**: Adjust settings based on actual workload
+  6. **Use secure mode**: Always use certificates in production
+  7. **Consistent configuration**: Use same settings across similar nodes
+  8. **Version awareness**: Some settings require specific CockroachDB versions
+</Accordion>
+
+## Troubleshooting
+
+### Configuration Issues
+
+**Invalid flag values:**
+- Check flag syntax and units (GiB vs GB)
+- Verify flag is supported in your version
+- Review startup logs for error messages
+
+**Setting not taking effect:**
+- Cluster settings require SQL connection
+- Some settings require node restart
+- Check permissions for setting modification
+
+**Memory issues:**
+- Increase `--cache` and `--max-sql-memory`
+- Check system memory availability
+- Monitor OOM events in system logs
+
+## See Also
+
+- [Cluster Management](/admin/cluster-management) - Cluster setup and operations
+- [Logging](/admin/logging) - Detailed logging configuration
+- [Monitoring](/admin/monitoring) - Metrics and observability

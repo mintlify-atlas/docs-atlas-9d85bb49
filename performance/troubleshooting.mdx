@@ -1,0 +1,542 @@
+---
+title: Troubleshooting Performance Issues
+description: Diagnose and resolve common CockroachDB performance problems
+---
+
+## Overview
+
+This guide helps you identify and resolve performance issues in CockroachDB. Learn how to diagnose slow queries, high latency, resource bottlenecks, and other common problems.
+
+## Diagnostic Approach
+
+<Steps>
+  <Step title="Identify symptoms">
+    Determine what users are experiencing: slow queries, timeouts, high latency.
+  </Step>
+  
+  <Step title="Gather metrics">
+    Check cluster metrics, query statistics, and system resources.
+  </Step>
+  
+  <Step title="Isolate the cause">
+    Use EXPLAIN, logs, and monitoring to pinpoint the bottleneck.
+  </Step>
+  
+  <Step title="Apply fixes">
+    Implement targeted optimizations based on root cause.
+  </Step>
+  
+  <Step title="Verify resolution">
+    Monitor metrics to confirm the issue is resolved.
+  </Step>
+</Steps>
+
+## Common Performance Issues
+
+### Slow Queries
+
+#### Symptoms
+- Queries taking longer than expected
+- Timeouts in application
+- High P99 latencies
+
+#### Diagnosis
+
+```sql
+-- Find slow queries
+SELECT 
+  query,
+  count,
+  mean_latency,
+  max_latency,
+  p99_latency
+FROM crdb_internal.node_statement_statistics
+WHERE mean_latency > INTERVAL '1 second'
+ORDER BY mean_latency DESC
+LIMIT 10;
+```
+
+```sql
+-- Analyze specific query
+EXPLAIN ANALYZE SELECT * FROM orders WHERE customer_id = 'cust123';
+```
+
+#### Solutions
+
+<CodeGroup>
+```sql Add Missing Index
+-- Problem: Full table scan
+EXPLAIN SELECT * FROM orders WHERE status = 'pending';
+-- Shows: FULL SCAN
+
+-- Solution: Create index
+CREATE INDEX idx_status ON orders (status);
+```
+
+```sql Update Statistics
+-- Problem: Inaccurate cardinality estimates
+EXPLAIN ANALYZE SELECT * FROM orders WHERE customer_id = 'cust123';
+-- Shows: estimated row count: 10000, actual row count: 5
+
+-- Solution: Refresh statistics
+CREATE STATISTICS stats_orders FROM orders;
+```
+
+```sql Optimize Query
+-- Problem: Inefficient subquery
+SELECT * FROM orders 
+WHERE customer_id IN (
+  SELECT id FROM customers WHERE country = 'US'
+);
+
+-- Solution: Use JOIN instead
+SELECT o.* FROM orders o
+JOIN customers c ON o.customer_id = c.id
+WHERE c.country = 'US';
+```
+</CodeGroup>
+
+### High Transaction Conflicts
+
+#### Symptoms
+- `RETRY_WRITE_TOO_OLD` errors
+- `RETRY_SERIALIZABLE` errors
+- High transaction retry rate
+
+#### Diagnosis
+
+```sql
+-- Check transaction conflict rate
+SELECT
+  txn_fingerprint_id,
+  count,
+  contention_time,
+  max_contention_time
+FROM crdb_internal.node_txn_stats
+WHERE contention_time > INTERVAL '100ms'
+ORDER BY contention_time DESC
+LIMIT 10;
+```
+
+```sql
+-- View contention events
+SELECT * FROM crdb_internal.cluster_contention_events
+ORDER BY collection_ts DESC
+LIMIT 20;
+```
+
+#### Solutions
+
+<Warning>
+Transaction conflicts occur when concurrent transactions access the same rows. Reduce contention by:
+- Shortening transaction duration
+- Using SELECT FOR UPDATE
+- Avoiding hot spots
+- Batching updates
+</Warning>
+
+<CodeGroup>
+```sql Use SELECT FOR UPDATE
+-- Problem: Lost updates from concurrent modifications
+BEGIN;
+  SELECT balance FROM accounts WHERE id = 'acc123';
+  -- Application logic
+  UPDATE accounts SET balance = 500 WHERE id = 'acc123';
+COMMIT;
+
+-- Solution: Lock the row
+BEGIN;
+  SELECT balance FROM accounts WHERE id = 'acc123' FOR UPDATE;
+  UPDATE accounts SET balance = 500 WHERE id = 'acc123';
+COMMIT;
+```
+
+```sql Batch Updates
+-- Problem: Many individual updates create contention
+FOR each_row IN rows:
+  UPDATE inventory SET quantity = quantity - 1 WHERE product_id = each_row.id;
+
+-- Solution: Single batched update
+UPDATE inventory SET quantity = quantity - 1
+WHERE product_id = ANY(ARRAY['prod1', 'prod2', 'prod3']);
+```
+
+```sql Add Transaction Priority
+-- Problem: Background job conflicts with user transactions
+BEGIN;
+  DELETE FROM logs WHERE created_at < NOW() - INTERVAL '90 days';
+COMMIT;
+
+-- Solution: Set low priority
+BEGIN PRIORITY LOW;
+  DELETE FROM logs WHERE created_at < NOW() - INTERVAL '90 days';
+COMMIT;
+```
+</CodeGroup>
+
+### Hotspots and Range Splits
+
+#### Symptoms
+- Uneven load distribution across nodes
+- High CPU on specific nodes
+- Sequential key inserts causing bottlenecks
+
+#### Diagnosis
+
+```sql
+-- View range distribution
+SHOW RANGES FROM TABLE orders;
+
+-- Check for hotspots
+SELECT
+  range_id,
+  lease_holder,
+  replica_localities,
+  range_size_mb
+FROM crdb_internal.ranges
+WHERE table_name = 'orders'
+ORDER BY range_size_mb DESC;
+```
+
+#### Solutions
+
+<CodeGroup>
+```sql Hash Sharding
+-- Problem: Sequential primary key creates hotspot
+CREATE TABLE events (
+  id INT PRIMARY KEY,
+  data JSONB
+);
+-- All writes go to same range
+
+-- Solution: Use hash-sharded key
+CREATE TABLE events (
+  id INT PRIMARY KEY USING HASH WITH (bucket_count = 16),
+  data JSONB
+);
+```
+
+```sql Manual Range Splits
+-- Problem: Large table with uneven distribution
+SHOW RANGES FROM TABLE orders;  -- Shows single large range
+
+-- Solution: Split and scatter
+ALTER TABLE orders SPLIT AT VALUES 
+  ('2024-01-01'), ('2024-02-01'), ('2024-03-01');
+ALTER TABLE orders SCATTER;
+```
+
+```sql UUID Primary Keys
+-- Problem: Auto-increment creates hotspot
+CREATE TABLE users (
+  id SERIAL PRIMARY KEY,
+  email STRING
+);
+
+-- Solution: Use UUID
+CREATE TABLE users (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  email STRING
+);
+```
+</CodeGroup>
+
+### High Memory Usage
+
+#### Symptoms
+- Out of memory (OOM) errors
+- Slow garbage collection
+- Node crashes
+
+#### Diagnosis
+
+```sql
+-- Check memory-intensive queries
+SELECT
+  query,
+  count,
+  max_mem_usage,
+  mean_mem_usage
+FROM crdb_internal.node_statement_statistics
+WHERE max_mem_usage > 1024 * 1024 * 1024  -- 1GB
+ORDER BY max_mem_usage DESC
+LIMIT 10;
+```
+
+#### Solutions
+
+<Note>
+Reduce memory usage by:
+- Adding LIMIT clauses to large result sets
+- Breaking large transactions into batches
+- Using streaming instead of loading all results
+- Reducing sort and hash join sizes
+</Note>
+
+```sql
+-- Problem: Large result set
+SELECT * FROM orders;  -- Returns millions of rows
+
+-- Solution: Paginate results
+SELECT * FROM orders ORDER BY id LIMIT 1000 OFFSET 0;
+
+-- Problem: Large join
+SELECT o.*, c.* FROM orders o CROSS JOIN customers c;
+
+-- Solution: Add filter
+SELECT o.*, c.* FROM orders o
+JOIN customers c ON o.customer_id = c.id
+WHERE o.created_at > NOW() - INTERVAL '1 day';
+```
+
+### Replication Lag
+
+#### Symptoms
+- Followers falling behind leaseholder
+- Increased read latency
+- `UNAVAILABLE` range errors
+
+#### Diagnosis
+
+```sql
+-- Check replication status
+SELECT
+  range_id,
+  lease_holder,
+  replicas,
+  unavailable_replicas,
+  underreplicated_replicas
+FROM crdb_internal.ranges_no_leases
+WHERE unavailable_replicas > 0 OR underreplicated_replicas > 0;
+```
+
+#### Solutions
+
+- Increase node resources (CPU, disk I/O)
+- Reduce write load or batch writes
+- Check network latency between nodes
+- Ensure sufficient replica count
+
+### Disk I/O Bottlenecks
+
+#### Symptoms
+- High disk latency
+- Slow write performance
+- `storage: file is closed` errors
+
+#### Diagnosis
+
+Monitor disk metrics:
+- IOPS (Input/Output Operations Per Second)
+- Read/write latency
+- Queue depth
+
+#### Solutions
+
+<Tip>
+**Disk I/O optimization:**
+
+1. Use SSD storage (required for production)
+2. Separate WAL (write-ahead log) and data directories
+3. Enable write combining where possible
+4. Reduce batch sizes for large writes
+5. Monitor disk utilization and expand when needed
+</Tip>
+
+### Network Latency
+
+#### Symptoms
+- High cross-region query latency
+- Slow distributed queries
+- RPC timeouts
+
+#### Diagnosis
+
+```sql
+-- Check query distribution
+EXPLAIN (DISTSQL) SELECT * FROM orders WHERE customer_id = 'cust123';
+-- Look for cross-region data movement
+
+-- View network statistics
+SELECT * FROM crdb_internal.cluster_queries
+WHERE distributed = true
+ORDER BY start DESC
+LIMIT 10;
+```
+
+#### Solutions
+
+<CodeGroup>
+```sql Follower Reads
+-- Reduce cross-region latency for read-heavy workloads
+SET TRANSACTION AS OF SYSTEM TIME follower_read_timestamp();
+SELECT * FROM orders WHERE created_at > NOW() - INTERVAL '7 days';
+```
+
+```sql Regional Tables
+-- Pin data to specific regions
+ALTER TABLE orders SET LOCALITY REGIONAL BY ROW AS region;
+
+-- Query local data only
+SELECT * FROM orders WHERE region = 'us-east';
+```
+
+```sql Duplicate Indexes
+-- Create region-specific indexes
+CREATE INDEX idx_us_customers ON customers (id) WHERE region = 'us-east';
+CREATE INDEX idx_eu_customers ON customers (id) WHERE region = 'eu-west';
+```
+</CodeGroup>
+
+## Diagnostic Queries
+
+### Cluster Health
+
+```sql
+-- Node status
+SELECT node_id, address, build_tag, started_at, updated_at 
+FROM crdb_internal.gossip_liveness;
+
+-- Range health
+SELECT 
+  COUNT(*) AS total_ranges,
+  SUM(CASE WHEN unavailable_replicas > 0 THEN 1 ELSE 0 END) AS unavailable,
+  SUM(CASE WHEN underreplicated_replicas > 0 THEN 1 ELSE 0 END) AS underreplicated
+FROM crdb_internal.ranges_no_leases;
+```
+
+### Query Statistics
+
+```sql
+-- Top queries by execution time
+SELECT
+  query,
+  count,
+  ROUND(mean_latency::NUMERIC, 2) AS avg_latency_ms,
+  ROUND((count * mean_latency)::NUMERIC, 2) AS total_time_ms
+FROM crdb_internal.node_statement_statistics
+ORDER BY total_time_ms DESC
+LIMIT 20;
+
+-- Failed queries
+SELECT
+  query,
+  count,
+  failure_count,
+  ROUND((failure_count::FLOAT / count * 100)::NUMERIC, 2) AS failure_rate
+FROM crdb_internal.node_statement_statistics
+WHERE failure_count > 0
+ORDER BY failure_count DESC;
+```
+
+### Resource Usage
+
+```sql
+-- Table sizes
+SELECT
+  table_name,
+  ROUND(total_bytes / 1024 / 1024 / 1024, 2) AS size_gb,
+  range_count
+FROM crdb_internal.table_sizes
+ORDER BY total_bytes DESC
+LIMIT 10;
+
+-- Index usage
+SELECT
+  table_name,
+  index_name,
+  total_reads,
+  last_read
+FROM crdb_internal.index_usage_statistics
+WHERE total_reads = 0 AND created_at < NOW() - INTERVAL '7 days'
+ORDER BY table_name;
+```
+
+## Monitoring Tools
+
+### Admin UI
+
+Access the Admin UI at `http://<node-address>:8080`:
+
+- **Overview**: Cluster health and capacity
+- **Metrics**: CPU, memory, disk, network
+- **SQL Activity**: Query statistics and slow queries
+- **Network Latency**: Round-trip times between nodes
+- **Replication**: Range distribution and health
+
+### Command-Line Tools
+
+```bash
+# Node status
+cockroach node status --host=<node-address>
+
+# Range status
+cockroach node ranges --host=<node-address>
+
+# Debug zip for support
+cockroach debug zip /tmp/debug.zip --host=<node-address>
+```
+
+## Escalation Checklist
+
+When to contact support:
+
+<Warning>
+**Critical issues requiring immediate attention:**
+
+- Cluster unavailability or data loss
+- Majority of nodes down
+- Persistent OOM errors
+- Data corruption detected
+- Security incidents
+</Warning>
+
+Provide the following when contacting support:
+
+1. Debug zip: `cockroach debug zip`
+2. Cluster version and configuration
+3. Reproduction steps
+4. Recent changes to cluster or workload
+5. EXPLAIN output for problematic queries
+6. Timeline of when issue started
+
+## Performance Tuning Workflow
+
+<Steps>
+  <Step title="Establish baseline">
+    Measure current performance: QPS, latency percentiles, error rate.
+  </Step>
+  
+  <Step title="Identify bottleneck">
+    Use metrics and queries above to find the limiting factor.
+  </Step>
+  
+  <Step title="Test hypothesis">
+    Apply fix in staging environment first.
+  </Step>
+  
+  <Step title="Measure impact">
+    Compare before/after metrics.
+  </Step>
+  
+  <Step title="Deploy and monitor">
+    Roll out to production with close monitoring.
+  </Step>
+</Steps>
+
+## Quick Reference
+
+<Tip>
+**Common fixes by symptom:**
+
+| Symptom | Likely Cause | Quick Fix |
+|---------|-------------|----------|
+| Slow SELECT | Missing index | CREATE INDEX |
+| High retries | Contention | SELECT FOR UPDATE, smaller txns |
+| Uneven load | Hotspot | Hash sharding, range splits |
+| OOM errors | Large result sets | Add LIMIT, paginate |
+| High P99 | Network latency | Follower reads, regional tables |
+| Slow writes | Sequential keys | UUID or hash-sharded keys |
+| Index join | Missing covering index | Add STORING clause |
+| Stale estimates | Old statistics | CREATE STATISTICS |
+</Tip>

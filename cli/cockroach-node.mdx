@@ -1,0 +1,383 @@
+---
+title: cockroach node
+description: Manage CockroachDB cluster nodes - list, inspect, decommission, and drain nodes
+---
+
+The `cockroach node` command provides tools for managing nodes in a CockroachDB cluster.
+
+## Synopsis
+
+```bash
+cockroach node [command] [flags]
+```
+
+## Description
+
+The `node` command supports several subcommands for cluster node management:
+
+- `ls` - List node IDs
+- `status` - Show detailed node status
+- `decommission` - Safely remove nodes from cluster
+- `recommission` - Cancel node decommissioning
+- `drain` - Prepare node for shutdown
+
+## Subcommands
+
+### node ls
+
+List IDs of all active nodes in the cluster.
+
+```bash
+cockroach node ls [flags]
+```
+
+**Example:**
+
+```bash
+cockroach node ls --host=localhost:26257 --insecure
+```
+
+**Output:**
+
+```
+  id
+------
+   1
+   2
+   3
+```
+
+<Note>
+Only shows active (non-decommissioned) nodes. Use `node status --decommission` to see all nodes.
+</Note>
+
+---
+
+### node status
+
+Display detailed status information for one or all nodes.
+
+```bash
+cockroach node status [node-id] [flags]
+```
+
+#### Flags
+
+<ParamField path="--decommission" type="boolean" default="false">
+  Include decommissioning and decommissioned nodes in output.
+</ParamField>
+
+<ParamField path="--ranges" type="boolean" default="false">
+  Include range distribution information.
+</ParamField>
+
+<ParamField path="--stats" type="boolean" default="false">
+  Include storage statistics.
+</ParamField>
+
+<ParamField path="--all" type="boolean" default="false">
+  Include all information (ranges, stats, decommission status).
+</ParamField>
+
+#### Examples
+
+<CodeGroup>
+```bash All Nodes
+cockroach node status --insecure
+```
+
+```bash Specific Node
+cockroach node status 2 --insecure
+```
+
+```bash With Range Info
+cockroach node status --ranges --insecure
+```
+
+```bash Include Decommissioned
+cockroach node status --decommission --insecure
+```
+
+```bash Full Details
+cockroach node status --all --insecure
+```
+</CodeGroup>
+
+#### Sample Output
+
+```
+  id |     address     |   sql_address   |  build  |         started_at         |         updated_at         | locality | attrs | is_available | is_live
+-----+-----------------+-----------------+---------+----------------------------+----------------------------+----------+-------+--------------+----------
+   1 | localhost:26257 | localhost:26257 | v23.1.0 | 2024-03-01 10:00:00+00:00 | 2024-03-01 12:30:00+00:00 |          |       |     true     |  true
+   2 | localhost:26258 | localhost:26258 | v23.1.0 | 2024-03-01 10:00:30+00:00 | 2024-03-01 12:30:00+00:00 |          |       |     true     |  true
+   3 | localhost:26259 | localhost:26259 | v23.1.0 | 2024-03-01 10:01:00+00:00 | 2024-03-01 12:30:00+00:00 |          |       |     true     |  true
+```
+
+---
+
+### node decommission
+
+Safely remove one or more nodes from the cluster by transferring their range replicas to other nodes.
+
+```bash
+cockroach node decommission <node-id> [<node-id>...] [flags]
+cockroach node decommission --self [flags]
+```
+
+<Warning>
+Decommissioning is a **permanent** operation. Recommissioning is only possible if the decommissioning process hasn't completed.
+</Warning>
+
+#### Flags
+
+<ParamField path="--self" type="boolean" default="false">
+  Decommission the node you're connected to.
+</ParamField>
+
+<ParamField path="--wait" type="string" default="all">
+  How long to wait for decommissioning to complete.
+  
+  Options:
+  - `all` - Wait until fully decommissioned (default)
+  - `none` - Start decommissioning and return immediately
+</ParamField>
+
+<ParamField path="--checks" type="string" default="skip">
+  Pre-decommission readiness checks.
+  
+  Options:
+  - `skip` - No pre-checks (default)
+  - `enabled` - Run checks, warn on issues
+  - `strict` - Run checks, fail if issues detected
+</ParamField>
+
+<ParamField path="--dry-run" type="boolean" default="false">
+  Show decommission status without actually decommissioning.
+</ParamField>
+
+#### Examples
+
+<CodeGroup>
+```bash Decommission Single Node
+cockroach node decommission 4 --host=localhost:26257 --insecure
+```
+
+```bash Decommission Multiple Nodes
+cockroach node decommission 4 5 6 --certs-dir=certs
+```
+
+```bash Decommission Self
+cockroach node decommission --self --certs-dir=certs
+```
+
+```bash Start and Return
+cockroach node decommission 4 --wait=none --insecure
+```
+
+```bash With Readiness Checks
+cockroach node decommission 4 --checks=strict --insecure
+```
+
+```bash Dry Run
+cockroach node decommission 4 --dry-run --insecure
+```
+</CodeGroup>
+
+#### Decommissioning Process
+
+The decommissioning process involves several stages:
+
+1. **Pre-checks** (if enabled): Verify cluster can handle node removal
+2. **Replica transfer**: Move range replicas to other nodes
+3. **Drain**: Close SQL connections and reject new ones
+4. **Mark decommissioned**: Finalize node removal
+
+#### Progress Output
+
+```
+  id | is_live | replicas | is_decommissioning | membership | is_draining
+-----+---------+----------+--------------------+------------+--------------
+   4 |  true   |   156    |        true        |  active    |    false
+.
+  id | is_live | replicas | is_decommissioning | membership | is_draining
+-----+---------+----------+--------------------+------------+--------------
+   4 |  true   |    42    |        true        |  active    |    false
+.
+  id | is_live | replicas | is_decommissioning | membership | is_draining
+-----+---------+----------+--------------------+------------+--------------
+   4 |  true   |     0    |        true        |  active    |    true
+
+No more data reported on target nodes. Please verify cluster health before removing the nodes.
+```
+
+<Note>
+Dots (`.`) indicate progress without status changes. The process completes when replica count reaches zero.
+</Note>
+
+---
+
+### node recommission
+
+Cancel decommissioning for nodes that haven't fully decommissioned yet.
+
+```bash
+cockroach node recommission <node-id> [<node-id>...] [flags]
+cockroach node recommission --self [flags]
+```
+
+<Warning>
+Recommissioning only works if the node hasn't fully decommissioned. Once decommissioning completes, the node cannot be recommissioned.
+</Warning>
+
+#### Examples
+
+<CodeGroup>
+```bash Recommission Single Node
+cockroach node recommission 4 --insecure
+```
+
+```bash Recommission Multiple Nodes
+cockroach node recommission 4 5 --certs-dir=certs
+```
+
+```bash Recommission Self
+cockroach node recommission --self --insecure
+```
+</CodeGroup>
+
+---
+
+### node drain
+
+Prepare a node for shutdown by draining client connections and transferring range leases.
+
+```bash
+cockroach node drain [node-id] [flags]
+cockroach node drain --self [flags]
+```
+
+<Note>
+Draining prepares for shutdown but doesn't stop the process. Use your service manager or send SIGTERM to actually stop the node.
+</Note>
+
+#### Flags
+
+<ParamField path="--self" type="boolean" default="false">
+  Drain the node you're connected to.
+</ParamField>
+
+<ParamField path="--shutdown" type="boolean" default="false">
+  Shutdown the node after draining completes.
+</ParamField>
+
+<ParamField path="--drain-wait" type="duration">
+  Maximum time to wait for drain to complete.
+</ParamField>
+
+#### Examples
+
+<CodeGroup>
+```bash Drain Node
+cockroach node drain 3 --insecure
+```
+
+```bash Drain and Shutdown
+cockroach node drain 3 --shutdown --insecure
+```
+
+```bash Drain Self
+cockroach node drain --self --certs-dir=certs
+```
+
+```bash With Timeout
+cockroach node drain 3 --drain-wait=5m --insecure
+```
+</CodeGroup>
+
+#### What Draining Does
+
+1. **Stop accepting new SQL connections**
+2. **Close existing SQL connections** gracefully
+3. **Transfer range leases** to other nodes
+4. **Wait for in-flight operations** to complete
+
+#### Output
+
+```
+drain ok
+```
+
+Or with `--shutdown`:
+
+```
+drain ok
+shutdown ok
+```
+
+## Connection Flags
+
+All `node` subcommands support standard connection flags:
+
+<ParamField path="--host" type="string" default="localhost:26257">
+  Node to connect to (can be any node in cluster).
+</ParamField>
+
+<ParamField path="--certs-dir" type="string" default="${HOME}/.cockroach-certs">
+  Certificate directory for secure connections.
+</ParamField>
+
+<ParamField path="--insecure" type="boolean" default="false">
+  Connect without encryption.
+</ParamField>
+
+## Best Practices
+
+<Note>
+**Decommissioning Best Practices:**
+
+1. Run `--checks=strict` before decommissioning production nodes
+2. Monitor cluster health during decommissioning
+3. Ensure sufficient capacity on remaining nodes
+4. Decommission nodes one at a time for safety
+5. Verify with `node status --decommission` after completion
+</Note>
+
+<Warning>
+**Important Considerations:**
+
+- **Capacity**: Ensure remaining nodes can handle additional replicas
+- **Replication Factor**: Maintain enough nodes for configured replication
+- **Timing**: Decommissioning can take hours for nodes with large datasets
+- **Monitoring**: Watch cluster metrics during the process
+</Warning>
+
+## Troubleshooting
+
+### Decommissioning Stalled
+
+If replica count stops decreasing:
+
+1. Check cluster health: `cockroach node status --all`
+2. Review logs for errors
+3. Verify remaining nodes have capacity
+4. Check network connectivity between nodes
+5. Review range allocation with `--ranges` flag
+
+### Cannot Drain Node
+
+- Ensure node is still responsive
+- Check for long-running transactions
+- Verify cluster settings for drain timeouts
+- Review server logs for detailed errors
+
+### Recommission Failed
+
+- Verify node hasn't fully decommissioned
+- Check node is still in cluster membership
+- Ensure node process is still running
+
+## See Also
+
+- [Start a Cluster](/cli/cockroach-start)
+- [SQL Shell](/cli/cockroach-sql)
+- [Debug Commands](/cli/cockroach-debug)

@@ -1,0 +1,270 @@
+---
+title: cockroach start
+description: Start a CockroachDB node and join a multi-node cluster
+---
+
+The `cockroach start` command starts a CockroachDB node and joins it to a cluster. For single-node development clusters, use [`cockroach start-single-node`](#start-single-node) instead.
+
+## Synopsis
+
+```bash
+cockroach start [flags]
+```
+
+## Description
+
+Start a CockroachDB node that exports data from one or more storage devices. The node will join an existing cluster or help form a new one.
+
+<Warning>
+After starting nodes with `cockroach start`, you must initialize the cluster using `cockroach init` before it can accept SQL connections.
+</Warning>
+
+## Required Flags
+
+<ParamField path="--join" type="string" required>
+  Comma-separated list of node addresses to join. Can specify hostnames or IP addresses with ports.
+  
+  Example: `--join=host1:26257,host2:26257,host3:26257`
+  
+  <Note>
+  It's legal for the first node to join itself. Other nodes don't need to be started yet when specifying them in `--join`.
+  </Note>
+</ParamField>
+
+## Storage Flags
+
+<ParamField path="--store" type="string" default="cockroach-data">
+  Storage device for node data. Can specify multiple stores by using this flag multiple times.
+  
+  Format: `[type=<type>,][path=]<path>[,<attribute>=<value>...]`
+  
+  **Attributes:**
+  - `type`: `mem` for in-memory (testing only) or omit for on-disk
+  - `path`: Directory path for data storage
+  - `size`: Maximum size (e.g., `100GB`, `50%`)
+  - `attrs`: Comma-separated attributes (e.g., `ssd`, `hdd`)
+  
+  <CodeGroup>
+  ```bash Single Store
+  --store=path=/mnt/cockroach-data
+  ```
+  
+  ```bash Multiple Stores
+  --store=path=/mnt/ssd1,attrs=ssd \
+  --store=path=/mnt/ssd2,attrs=ssd \
+  --store=path=/mnt/hdd1,attrs=hdd
+  ```
+  
+  ```bash Size Limit
+  --store=path=/mnt/data,size=100GB
+  ```
+  </CodeGroup>
+</ParamField>
+
+## Network Flags
+
+<ParamField path="--listen-addr" type="string" default="localhost:26257">
+  Address/hostname and port to listen on for intra-cluster communication.
+  
+  Format: `[host]:port`
+</ParamField>
+
+<ParamField path="--advertise-addr" type="string">
+  Address to advertise to other nodes. Use when `--listen-addr` is not routable by other nodes.
+  
+  Example: Public IP for cloud deployments with private networks
+</ParamField>
+
+<ParamField path="--sql-addr" type="string" default="same as --listen-addr">
+  Address/hostname and port for SQL client connections.
+  
+  <Note>
+  Separating SQL and RPC listeners is recommended for production deployments.
+  </Note>
+</ParamField>
+
+<ParamField path="--http-addr" type="string" default="localhost:8080">
+  Address for the DB Console and HTTP API.
+</ParamField>
+
+## Locality Flags
+
+<ParamField path="--locality" type="string">
+  Ordered, comma-separated list of key-value pairs describing node topology.
+  
+  Used for replica placement and query optimization.
+  
+  ```bash
+  --locality=cloud=gce,region=us-west1,zone=us-west1-b
+  ```
+  
+  <Warning>
+  Locality tiers and order must be consistent across all nodes in the cluster.
+  </Warning>
+</ParamField>
+
+<ParamField path="--attrs" type="string">
+  Colon-separated list of node attributes for constraint-based replica placement.
+  
+  Example: `--attrs=gpu:x16c`
+</ParamField>
+
+## Memory and Cache Flags
+
+<ParamField path="--cache" type="string" default="128MiB">
+  Total cache size shared across all stores. Accepts bytes, size suffixes (e.g., `1GB`), or percentage of physical memory (e.g., `25%`).
+  
+  <Note>
+  For production: allocate 25-50% of system memory to cache.
+  </Note>
+</ParamField>
+
+<ParamField path="--max-sql-memory" type="string" default="25% of physical memory">
+  Maximum memory for SQL operations including query execution and prepared statements.
+  
+  Accepts bytes, size suffixes, or percentage.
+</ParamField>
+
+<ParamField path="--max-go-memory" type="string" default="2.25x of --max-sql-memory">
+  Soft memory limit for the Go runtime (GOMEMLIMIT).
+  
+  <Note>
+  The Pebble cache (configured by `--cache`) is not controlled by the Go runtime.
+  </Note>
+</ParamField>
+
+<ParamField path="--max-disk-temp-storage" type="string" default="32GiB">
+  Maximum disk storage for temporary SQL data (spills from memory).
+  
+  Location is within the first store directory.
+</ParamField>
+
+## Security Flags
+
+<ParamField path="--certs-dir" type="string" default="${HOME}/.cockroach-certs">
+  Path to certificate directory. Required for secure clusters.
+  
+  Must contain:
+  - `ca.crt` (CA certificate)
+  - `node.crt` (node certificate)
+  - `node.key` (node private key)
+</ParamField>
+
+<ParamField path="--insecure" type="boolean" default="false">
+  Start in insecure mode without encryption.
+  
+  <Warning>
+  **Never use `--insecure` in production!** Use only for local development and testing.
+  </Warning>
+</ParamField>
+
+## Background and Logging
+
+<ParamField path="--background" type="boolean" default="false">
+  Start the server in the background. Control returns to shell only when server is ready.
+</ParamField>
+
+<ParamField path="--log" type="string">
+  Configure logging output. See logging documentation for detailed syntax.
+  
+  Example: `--log='file-defaults: {dir: /var/log/cockroach}'`
+</ParamField>
+
+## Examples
+
+### Start First Node in Cluster
+
+```bash
+cockroach start \
+  --certs-dir=certs \
+  --store=path=/mnt/cockroach-data \
+  --listen-addr=node1.example.com:26257 \
+  --http-addr=node1.example.com:8080 \
+  --join=node1.example.com:26257,node2.example.com:26257,node3.example.com:26257
+```
+
+### Start with Locality Information
+
+```bash
+cockroach start \
+  --certs-dir=certs \
+  --store=path=/mnt/data \
+  --locality=cloud=aws,region=us-east-1,zone=us-east-1a \
+  --join=node1:26257,node2:26257,node3:26257
+```
+
+### Start with Multiple Stores
+
+```bash
+cockroach start \
+  --insecure \
+  --store=path=/mnt/ssd1,attrs=ssd \
+  --store=path=/mnt/ssd2,attrs=ssd \
+  --store=path=/mnt/hdd1,attrs=hdd \
+  --join=localhost:26257
+```
+
+### Start in Background
+
+```bash
+cockroach start \
+  --certs-dir=certs \
+  --store=/mnt/data \
+  --join=node1:26257,node2:26257 \
+  --background
+```
+
+## Start Single Node
+
+For development and testing, use the simplified single-node command:
+
+```bash
+cockroach start-single-node [flags]
+```
+
+<Note>
+`start-single-node` automatically initializes the cluster and sets replication factor to 1. The `--join` flag is not supported.
+</Note>
+
+### Single Node Example
+
+```bash
+cockroach start-single-node \
+  --insecure \
+  --store=path=/tmp/cockroach-data \
+  --listen-addr=localhost:26257 \
+  --http-addr=localhost:8080
+```
+
+## Post-Start Steps
+
+<Warning>
+For multi-node clusters started with `cockroach start`, you must run initialization:
+
+```bash
+cockroach init --host=<address of any node> --certs-dir=certs
+```
+
+The cluster won't accept connections until initialized.
+</Warning>
+
+## Troubleshooting
+
+### Node Won't Start
+
+- Verify `--join` addresses are correct and reachable
+- Check firewall rules allow connections on specified ports
+- Ensure certificates are valid and properly configured
+- Review logs in the data directory
+
+### Cannot Initialize Cluster
+
+- Ensure at least one node is running
+- Verify network connectivity between nodes
+- Check that `--join` includes addresses of running nodes
+
+## See Also
+
+- [Node Management](/cli/cockroach-node)
+- [SQL Shell](/cli/cockroach-sql)
+- [Debug Commands](/cli/cockroach-debug)

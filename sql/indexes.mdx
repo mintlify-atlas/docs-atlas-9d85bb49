@@ -1,0 +1,504 @@
+---
+title: Indexes
+description: Index types, creation, and optimization strategies for CockroachDB
+---
+
+Indexes are critical database structures that improve query performance by allowing fast data retrieval. This page covers index types, creation syntax, and best practices for CockroachDB.
+
+## Index Overview
+
+An index maintains an ordered copy of a subset of table data, organized by one or more columns. CockroachDB automatically creates an index on the primary key and supports several additional index types.
+
+## Index Types
+
+### Primary Key Index
+
+Every table must have a primary key, which is automatically indexed.
+
+<CodeGroup>
+```sql Single Column Primary Key
+CREATE TABLE users (
+  id INT PRIMARY KEY,
+  username VARCHAR(50),
+  email VARCHAR(255)
+);
+```
+
+```sql Composite Primary Key
+CREATE TABLE order_items (
+  order_id INT,
+  item_id INT,
+  quantity INT,
+  PRIMARY KEY (order_id, item_id)
+);
+```
+
+```sql Hash-Sharded Primary Key
+CREATE TABLE events (
+  event_id UUID PRIMARY KEY USING HASH WITH (bucket_count = 8),
+  event_type TEXT,
+  occurred_at TIMESTAMP
+);
+```
+</CodeGroup>
+
+<Note>
+Hash-sharded indexes distribute data across multiple ranges to avoid hotspots on sequential key inserts.
+</Note>
+
+### Secondary Indexes
+
+Secondary indexes are created on non-primary key columns to speed up queries.
+
+<Tabs>
+  <Tab title="Single Column">
+    ```sql
+    -- Anonymous index
+    CREATE INDEX ON users (email);
+    
+    -- Named index
+    CREATE INDEX users_email_idx ON users (email);
+    
+    -- Unique index
+    CREATE UNIQUE INDEX users_username_idx ON users (username);
+    ```
+  </Tab>
+  
+  <Tab title="Composite">
+    ```sql
+    -- Multi-column index
+    CREATE INDEX users_name_idx ON users (last_name, first_name);
+    
+    -- Ordering matters for queries
+    CREATE INDEX orders_user_date_idx ON orders (user_id, created_at DESC);
+    ```
+    
+    <Note>
+    Composite indexes work left-to-right. An index on `(a, b, c)` can be used for queries on `a`, `(a, b)`, or `(a, b, c)`, but not `b` or `c` alone.
+    </Note>
+  </Tab>
+  
+  <Tab title="Descending">
+    ```sql
+    -- Descending order (useful for time-series queries)
+    CREATE INDEX logs_timestamp_idx ON logs (created_at DESC);
+    
+    -- Mixed directions
+    CREATE INDEX scores_idx ON game_scores (game_id ASC, score DESC);
+    ```
+  </Tab>
+</Tabs>
+
+### Inverted Indexes
+
+Inverted indexes enable efficient queries on JSONB, ARRAY, and spatial data types.
+
+<Tabs>
+  <Tab title="JSONB">
+    ```sql
+    CREATE TABLE documents (
+      id INT PRIMARY KEY,
+      metadata JSONB
+    );
+    
+    -- Create inverted index
+    CREATE INVERTED INDEX ON documents (metadata);
+    
+    -- Query using containment
+    SELECT * FROM documents 
+    WHERE metadata @> '{"status": "active"}';
+    
+    -- Query using existence
+    SELECT * FROM documents 
+    WHERE metadata ? 'user_id';
+    ```
+  </Tab>
+  
+  <Tab title="Arrays">
+    ```sql
+    CREATE TABLE articles (
+      id INT PRIMARY KEY,
+      tags TEXT[]
+    );
+    
+    CREATE INVERTED INDEX ON articles (tags);
+    
+    -- Find articles with specific tag
+    SELECT * FROM articles 
+    WHERE tags @> ARRAY['database'];
+    
+    -- Find articles with any of these tags
+    SELECT * FROM articles 
+    WHERE tags && ARRAY['sql', 'nosql'];
+    ```
+  </Tab>
+  
+  <Tab title="Geography">
+    ```sql
+    CREATE TABLE locations (
+      id INT PRIMARY KEY,
+      point GEOGRAPHY
+    );
+    
+    CREATE INVERTED INDEX ON locations (point);
+    
+    -- Spatial queries
+    SELECT * FROM locations 
+    WHERE ST_DWithin(
+      point, 
+      'POINT(-122.4194 37.7749)'::GEOGRAPHY, 
+      1000
+    );
+    ```
+  </Tab>
+</Tabs>
+
+### Partial Indexes
+
+Partial indexes include only rows matching a WHERE condition, reducing storage and improving performance.
+
+```sql
+-- Index only active users
+CREATE INDEX active_users_email_idx ON users (email) 
+WHERE status = 'active';
+
+-- Index recent orders
+CREATE INDEX recent_orders_idx ON orders (user_id, created_at) 
+WHERE created_at > '2026-01-01';
+
+-- Index non-null values
+CREATE INDEX users_phone_idx ON users (phone) 
+WHERE phone IS NOT NULL;
+
+-- Query using partial index
+SELECT * FROM users 
+WHERE email = 'alice@example.com' AND status = 'active';
+```
+
+<Warning>
+The query's WHERE clause must match or be more restrictive than the index predicate for the partial index to be used.
+</Warning>
+
+### Covering Indexes
+
+Covering indexes store additional columns to avoid table lookups.
+
+```sql
+-- Index with STORING clause
+CREATE INDEX orders_user_idx ON orders (user_id) 
+STORING (total, created_at);
+
+-- This query can be satisfied entirely from the index
+SELECT user_id, total, created_at 
+FROM orders 
+WHERE user_id = 123;
+```
+
+<ParamField path="STORING" type="column list">
+  Additional columns to store in the index. These columns are not part of the index key but are included in the index data for faster retrieval.
+</ParamField>
+
+### Expression Indexes
+
+Create indexes on computed expressions.
+
+```sql
+-- Index on lowercase email for case-insensitive search
+CREATE INDEX users_email_lower_idx ON users (LOWER(email));
+
+SELECT * FROM users WHERE LOWER(email) = 'alice@example.com';
+
+-- Index on extracted JSON field
+CREATE INDEX metadata_status_idx ON documents ((metadata->>'status'));
+
+SELECT * FROM documents WHERE metadata->>'status' = 'active';
+```
+
+## Index Management
+
+### Creating Indexes
+
+<Tabs>
+  <Tab title="CREATE INDEX">
+    ```sql
+    -- Basic syntax
+    CREATE INDEX [IF NOT EXISTS] [index_name] 
+    ON table_name (column1 [ASC|DESC], column2, ...)
+    [STORING (column3, column4, ...)]
+    [WHERE predicate];
+    ```
+  </Tab>
+  
+  <Tab title="CONCURRENTLY">
+    ```sql
+    -- Create index without blocking writes
+    CREATE INDEX CONCURRENTLY users_email_idx ON users (email);
+    ```
+    
+    <Note>
+    `CONCURRENTLY` creates the index without taking a full table lock, allowing writes to continue. This is recommended for large tables in production.
+    </Note>
+  </Tab>
+  
+  <Tab title="IF NOT EXISTS">
+    ```sql
+    -- Idempotent index creation
+    CREATE INDEX IF NOT EXISTS users_email_idx ON users (email);
+    ```
+  </Tab>
+</Tabs>
+
+### Viewing Indexes
+
+<CodeGroup>
+```sql SHOW INDEXES
+SHOW INDEXES FROM users;
+
+SHOW INDEXES FROM my_database.public.users;
+```
+
+```sql System Catalogs
+-- Query pg_indexes
+SELECT 
+  schemaname,
+  tablename,
+  indexname,
+  indexdef
+FROM pg_indexes
+WHERE tablename = 'users';
+
+-- Check index usage
+SELECT * FROM crdb_internal.index_usage_statistics
+WHERE table_id = 'users'::REGCLASS;
+```
+</CodeGroup>
+
+### Altering Indexes
+
+<CodeGroup>
+```sql Rename Index
+ALTER INDEX users_email_idx RENAME TO idx_users_email;
+```
+
+```sql Index Visibility
+-- Make index invisible (not used by optimizer)
+ALTER INDEX idx_users_email INVISIBLE;
+
+-- Make index visible again
+ALTER INDEX idx_users_email VISIBLE;
+```
+
+```sql Zone Configuration
+-- Configure replication for index
+ALTER INDEX users_email_idx CONFIGURE ZONE USING 
+  num_replicas = 5,
+  gc.ttlseconds = 90000;
+```
+</CodeGroup>
+
+### Dropping Indexes
+
+```sql
+-- Drop single index
+DROP INDEX users_email_idx;
+
+-- Conditional drop
+DROP INDEX IF EXISTS temp_idx;
+
+-- Drop with cascade
+DROP INDEX users_email_idx CASCADE;
+
+-- Drop concurrently (non-blocking)
+DROP INDEX CONCURRENTLY users@users_email_idx;
+```
+
+## Index Performance
+
+### When to Use Indexes
+
+<Tabs>
+  <Tab title="Good Use Cases">
+    - Columns in WHERE clauses
+    - JOIN columns
+    - ORDER BY columns
+    - Columns with high selectivity (many distinct values)
+    - Foreign key columns
+    
+    ```sql
+    -- Good: Frequently queried column
+    CREATE INDEX ON orders (user_id);
+    
+    -- Good: JOIN optimization
+    CREATE INDEX ON order_items (order_id);
+    
+    -- Good: Sorting optimization
+    CREATE INDEX ON logs (created_at DESC);
+    ```
+  </Tab>
+  
+  <Tab title="Poor Use Cases">
+    - Columns with low selectivity (few distinct values)
+    - Small tables (full scan is faster)
+    - Columns that are rarely queried
+    - Tables with high write:read ratio
+    
+    ```sql
+    -- Poor: Boolean column (low selectivity)
+    -- Don't create: CREATE INDEX ON users (is_active);
+    
+    -- Better: Use partial index if needed
+    CREATE INDEX ON users (email) WHERE is_active = true;
+    ```
+  </Tab>
+</Tabs>
+
+### Index Analysis
+
+<CodeGroup>
+```sql EXPLAIN
+-- See if index is used
+EXPLAIN SELECT * FROM users WHERE email = 'alice@example.com';
+
+-- Analyze actual execution
+EXPLAIN ANALYZE SELECT * FROM users 
+WHERE created_at > '2026-01-01'
+ORDER BY created_at DESC
+LIMIT 10;
+```
+
+```sql Index Statistics
+-- Check index usage
+SELECT 
+  table_name,
+  index_name,
+  total_reads,
+  last_read
+FROM crdb_internal.index_usage_statistics
+WHERE table_name = 'users'
+ORDER BY total_reads DESC;
+```
+</CodeGroup>
+
+### Index Recommendations
+
+<Note>
+**Best Practices:**
+
+1. **Create indexes based on queries** - Index columns that appear in WHERE, JOIN, and ORDER BY clauses
+2. **Use composite indexes wisely** - Order columns by selectivity (most selective first)
+3. **Leverage covering indexes** - Use STORING for frequently accessed columns
+4. **Monitor index usage** - Drop unused indexes to reduce write overhead
+5. **Use partial indexes** - Reduce index size for filtered queries
+6. **Consider hash sharding** - For sequential keys with high insert rates
+</Note>
+
+## Index Internals
+
+### Index Structure
+
+CockroachDB uses LSM-tree (Log-Structured Merge-tree) based storage:
+
+- Indexes are stored separately from table data
+- Each index maintains its own key-value pairs
+- Keys are ordered for efficient range scans
+- Updates are written to a write-ahead log first
+
+### Index Key Encoding
+
+```sql
+-- For index on (last_name, first_name)
+-- Index keys are encoded as:
+-- /Table/users/index_id/<last_name>/<first_name>/<primary_key>
+
+CREATE INDEX users_name_idx ON users (last_name, first_name);
+```
+
+### Hash-Sharded Indexes
+
+<Tabs>
+  <Tab title="Concept">
+    Hash sharding distributes index data across multiple ranges by adding a computed hash column.
+    
+    ```sql
+    CREATE TABLE events (
+      event_id UUID PRIMARY KEY USING HASH WITH (bucket_count = 8),
+      event_type TEXT,
+      data JSONB
+    );
+    ```
+  </Tab>
+  
+  <Tab title="Benefits">
+    - Prevents hotspots on sequential inserts
+    - Distributes write load across cluster
+    - Improves insert throughput
+    - Better range distribution
+  </Tab>
+  
+  <Tab title="Trade-offs">
+    - Range scans become scatter-gather operations
+    - Slightly increased storage overhead
+    - Must choose bucket_count carefully (typically 8-16)
+  </Tab>
+</Tabs>
+
+## Advanced Index Techniques
+
+### Multi-Region Indexes
+
+```sql
+-- Configure index for specific region
+ALTER INDEX users_email_idx CONFIGURE ZONE USING 
+  num_replicas = 3,
+  constraints = '{+region=us-east}';
+
+-- Create index with regional survivability
+CREATE INDEX users_regional_idx ON users (region, user_id)
+STORING (email, name);
+```
+
+### Vector Indexes
+
+```sql
+-- For similarity search (requires vector extension)
+CREATE TABLE embeddings (
+  id INT PRIMARY KEY,
+  vector FLOAT8[]
+);
+
+-- Create vector index for nearest neighbor search
+CREATE VECTOR INDEX ON embeddings (vector);
+```
+
+## Troubleshooting
+
+### Index Not Being Used
+
+<CodeGroup>
+```sql Check with EXPLAIN
+EXPLAIN (VERBOSE) SELECT * FROM users WHERE email = 'alice@example.com';
+
+-- Look for "index join" or "scan" nodes
+```
+
+```sql Force Index Usage
+SELECT * FROM users@users_email_idx 
+WHERE email = 'alice@example.com';
+```
+</CodeGroup>
+
+### Slow Index Creation
+
+```sql
+-- Use CONCURRENTLY for large tables
+CREATE INDEX CONCURRENTLY large_table_idx ON large_table (column_name);
+
+-- Monitor progress
+SHOW JOBS;
+```
+
+## See Also
+
+- [Constraints](/sql/constraints) - PRIMARY KEY and UNIQUE constraints
+- [Statements](/sql/statements) - CREATE/ALTER/DROP INDEX syntax
+- [Query Performance](https://www.cockroachlabs.com/docs/stable/query-behavior-troubleshooting) - Query optimization guide

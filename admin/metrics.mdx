@@ -1,0 +1,457 @@
+---
+title: Metrics and Observability
+description: Comprehensive guide to CockroachDB metrics, performance indicators, and observability features
+---
+
+## Overview
+
+CockroachDB exposes hundreds of metrics for monitoring cluster health, performance, and resource usage. These metrics are available through the Admin UI, Prometheus endpoints, and SQL queries.
+
+## Metrics Architecture
+
+CockroachDB metrics are organized into several categories:
+
+- **Node metrics**: Per-node system resources and health
+- **Store metrics**: Per-store storage and replication statistics  
+- **SQL metrics**: Query execution and connection statistics
+- **Replication metrics**: Raft consensus and replica health
+- **Storage engine metrics**: LSM tree and compaction statistics
+
+## Accessing Metrics
+
+### Prometheus Endpoint
+
+The primary metrics endpoint exports Prometheus-format metrics:
+
+```bash
+curl http://localhost:8080/_status/vars
+```
+
+<Note>
+  The `/_status/vars` endpoint is unauthenticated and designed for external monitoring systems.
+</Note>
+
+### Load Metrics Endpoint
+
+Lightweight endpoint for basic health metrics:
+
+```bash
+curl http://localhost:8080/_status/load
+```
+
+Returns:
+- `sys.cpu.user.percent`: User CPU usage
+- `sys.cpu.sys.percent`: System CPU usage  
+- `sys.uptime`: Node uptime in seconds
+
+### Admin UI
+
+Visual metrics dashboard:
+```
+http://localhost:8080/#/metrics
+```
+
+### SQL Queries
+
+Query metrics via internal tables:
+
+```sql
+SELECT * FROM crdb_internal.kv_store_status;
+SELECT * FROM crdb_internal.node_metrics;
+```
+
+## Core Metrics Reference
+
+### Node Health Metrics
+
+<Accordion title="Liveness Metrics">
+  | Metric | Type | Description |
+  |--------|------|-------------|
+  | `liveness_livenodes` | Gauge | Number of live nodes in cluster |
+  | `liveness_heartbeatlatency` | Histogram | Liveness heartbeat latency |
+  | `liveness_heartbeatfailures` | Counter | Failed liveness heartbeats |
+  | `liveness_epochincrements` | Counter | Liveness epoch increments |
+</Accordion>
+
+<Accordion title="System Resource Metrics">
+  | Metric | Type | Description |
+  |--------|------|-------------|
+  | `sys.cpu.user.percent` | Gauge | User CPU usage (0-100%) |
+  | `sys.cpu.sys.percent` | Gauge | System CPU usage (0-100%) |
+  | `sys.rss` | Gauge | Resident set size (bytes) |
+  | `sys.go.allocbytes` | Gauge | Go allocated memory (bytes) |
+  | `sys.uptime` | Gauge | Node uptime (seconds) |
+  | `sys.fd.open` | Gauge | Open file descriptors |
+  | `sys.fd.softlimit` | Gauge | File descriptor soft limit |
+</Accordion>
+
+<Accordion title="Disk I/O Metrics">
+  | Metric | Type | Description |
+  |--------|------|-------------|
+  | `sys.host.disk.read.bytes` | Counter | Disk bytes read |
+  | `sys.host.disk.write.bytes` | Counter | Disk bytes written |
+  | `sys.host.disk.read.count` | Counter | Disk read operations |
+  | `sys.host.disk.write.count` | Counter | Disk write operations |
+  | `sys.host.disk.iopsinprogress` | Gauge | I/O operations in progress |
+  | `sys.host.disk.weightediopsinprogress` | Gauge | Weighted I/O queue length |
+</Accordion>
+
+<Accordion title="Network Metrics">
+  | Metric | Type | Description |
+  |--------|------|-------------|
+  | `sys.host.net.recv.bytes` | Counter | Network bytes received |
+  | `sys.host.net.send.bytes` | Counter | Network bytes sent |
+  | `sys.host.net.recv.packets` | Counter | Network packets received |
+  | `sys.host.net.send.packets` | Counter | Network packets sent |
+</Accordion>
+
+### SQL Metrics
+
+<Accordion title="Connection Metrics">
+  | Metric | Type | Description |
+  |--------|------|-------------|
+  | `sql.conns` | Gauge | Active SQL connections |
+  | `sql.new_conns` | Counter | New SQL connections created |
+  | `sql.bytesIn` | Counter | SQL bytes received |
+  | `sql.bytesOut` | Counter | SQL bytes sent |
+</Accordion>
+
+<Accordion title="Query Execution Metrics">
+  | Metric | Type | Description |
+  |--------|------|-------------|
+  | `sql.query.count` | Counter | Total queries executed |
+  | `sql.select.count` | Counter | SELECT queries |
+  | `sql.insert.count` | Counter | INSERT queries |
+  | `sql.update.count` | Counter | UPDATE queries |
+  | `sql.delete.count` | Counter | DELETE queries |
+  | `sql.ddl.count` | Counter | DDL statements |
+  | `sql.exec.latency` | Histogram | Query execution latency |
+  | `sql.service.latency` | Histogram | End-to-end query latency |
+</Accordion>
+
+<Accordion title="Transaction Metrics">
+  | Metric | Type | Description |
+  |--------|------|-------------|
+  | `sql.txn.begin.count` | Counter | Transactions started |
+  | `sql.txn.commit.count` | Counter | Transactions committed |
+  | `sql.txn.abort.count` | Counter | Transactions aborted |
+  | `sql.txn.rollback.count` | Counter | Transactions rolled back |
+  | `sql.txn.latency` | Histogram | Transaction latency |
+</Accordion>
+
+### Storage Metrics
+
+<Accordion title="Capacity Metrics">
+  | Metric | Type | Description |
+  |--------|------|-------------|
+  | `capacity` | Gauge | Total storage capacity (bytes) |
+  | `capacity.available` | Gauge | Available storage (bytes) |
+  | `capacity.used` | Gauge | Used storage (bytes) |
+  | `livebytes` | Gauge | Live data (bytes) |
+  | `sysbytes` | Gauge | System data (bytes) |
+  | `valbytes` | Gauge | Value bytes |
+  | `keybytes` | Gauge | Key bytes |
+  | `intentbytes` | Gauge | Intent bytes (uncommitted) |
+</Accordion>
+
+<Accordion title="LSM Metrics">
+  | Metric | Type | Description |
+  |--------|------|-------------|
+  | `storage.l0-num-files` | Gauge | L0 SSTable count |
+  | `storage.l0-sublevels` | Gauge | L0 sublevels |
+  | `storage.marked-for-compaction-files` | Gauge | Files marked for compaction |
+  | `storage.compactions` | Counter | Compaction operations |
+  | `storage.flushes` | Counter | Memtable flushes |
+  | `storage.flush.bytes` | Counter | Bytes flushed |
+</Accordion>
+
+<Accordion title="Read/Write Metrics">
+  | Metric | Type | Description |
+  |--------|------|-------------|
+  | `rocksdb.read.bytes` | Counter | RocksDB bytes read |
+  | `rocksdb.write.bytes` | Counter | RocksDB bytes written |
+  | `rocksdb.block.cache.hits` | Counter | Block cache hits |
+  | `rocksdb.block.cache.misses` | Counter | Block cache misses |
+  | `rocksdb.bloom.filter.prefix.useful` | Counter | Bloom filter hits |
+</Accordion>
+
+### Replication Metrics
+
+<Accordion title="Range Metrics">
+  | Metric | Type | Description |
+  |--------|------|-------------|
+  | `ranges` | Gauge | Total ranges on node |
+  | `ranges.unavailable` | Gauge | Unavailable ranges |
+  | `ranges.underreplicated` | Gauge | Under-replicated ranges |
+  | `ranges.overreplicated` | Gauge | Over-replicated ranges |
+  | `ranges.quiescent` | Gauge | Quiescent ranges |
+  | `replicas` | Gauge | Total replicas on node |
+  | `replicas.leaders` | Gauge | Raft leader replicas |
+  | `replicas.leaseholders` | Gauge | Lease holder replicas |
+</Accordion>
+
+<Accordion title="Raft Metrics">
+  | Metric | Type | Description |
+  |--------|------|-------------|
+  | `raft.commandsapplied` | Counter | Raft commands applied |
+  | `raft.process.commandcommit.latency` | Histogram | Command commit latency |
+  | `raft.process.logcommit.latency` | Histogram | Log commit latency |
+  | `raft.ticks` | Counter | Raft ticks |
+  | `raft.rcvd.heartbeat` | Counter | Heartbeats received |
+  | `raft.enqueued.pending` | Gauge | Pending Raft proposals |
+</Accordion>
+
+<Accordion title="Lease Metrics">
+  | Metric | Type | Description |
+  |--------|------|-------------|
+  | `leases.success` | Counter | Successful lease acquisitions |
+  | `leases.error` | Counter | Failed lease acquisitions |
+  | `leases.transfers.success` | Counter | Successful lease transfers |
+  | `leases.transfers.error` | Counter | Failed lease transfers |
+  | `leases.expiration` | Counter | Lease expirations |
+</Accordion>
+
+### KV Metrics
+
+<Accordion title="KV Operation Metrics">
+  | Metric | Type | Description |
+  |--------|------|-------------|
+  | `txn.commits` | Counter | KV transactions committed |
+  | `txn.aborts` | Counter | KV transactions aborted |
+  | `txn.restarts` | Histogram | Transaction restarts |
+  | `requests.slow.raft` | Counter | Slow Raft proposals |
+  | `requests.slow.latch` | Counter | Slow latch acquisitions |
+  | `requests.slow.lease` | Counter | Slow lease acquisitions |
+</Accordion>
+
+## Metric Types
+
+CockroachDB uses standard Prometheus metric types:
+
+<Accordion title="Metric Type Descriptions">
+  **Counter**
+  - Monotonically increasing value
+  - Examples: `sql.query.count`, `txn.commits`
+  - Use `rate()` or `increase()` in Prometheus
+  
+  **Gauge**
+  - Current value that can increase or decrease
+  - Examples: `sql.conns`, `capacity.available`
+  - Use directly or with `avg_over_time()`
+  
+  **Histogram**
+  - Distribution of values in buckets
+  - Examples: `sql.exec.latency`, `raft.process.commandcommit.latency`
+  - Use `histogram_quantile()` for percentiles
+</Accordion>
+
+## Prometheus Queries
+
+### Common Query Patterns
+
+<CodeGroup>
+```promql Query Rate
+# Queries per second
+rate(sql_query_count[1m])
+
+# By node
+sum(rate(sql_query_count[1m])) by (node_id)
+```
+
+```promql Latency Percentiles
+# p50 latency
+histogram_quantile(0.50, rate(sql_exec_latency_bucket[5m]))
+
+# p99 latency  
+histogram_quantile(0.99, rate(sql_exec_latency_bucket[5m]))
+
+# p999 latency
+histogram_quantile(0.999, rate(sql_exec_latency_bucket[5m]))
+```
+
+```promql Resource Usage
+# CPU usage by node
+avg(sys_cpu_user_percent) by (node_id)
+
+# Memory usage
+sum(sys_rss) by (node_id)
+
+# Disk space available
+sum(capacity_available) by (store)
+```
+
+```promql Replication Health
+# Unavailable ranges
+sum(ranges_unavailable)
+
+# Under-replicated ranges
+sum(ranges_underreplicated)
+
+# Replica distribution
+sum(replicas) by (node_id)
+```
+</CodeGroup>
+
+### Advanced Queries
+
+<CodeGroup>
+```promql Transaction Abort Rate
+rate(sql_txn_abort_count[5m]) / rate(sql_txn_begin_count[5m])
+```
+
+```promql Cache Hit Ratio
+rate(rocksdb_block_cache_hits[5m]) / 
+  (rate(rocksdb_block_cache_hits[5m]) + 
+   rate(rocksdb_block_cache_misses[5m]))
+```
+
+```promql Disk Utilization
+(capacity_used / (capacity_used + capacity_available)) * 100
+```
+
+```promql Query Throughput by Type
+sum(rate(sql_select_count[1m])) as select_qps,
+sum(rate(sql_insert_count[1m])) as insert_qps,
+sum(rate(sql_update_count[1m])) as update_qps,
+sum(rate(sql_delete_count[1m])) as delete_qps
+```
+</CodeGroup>
+
+## Metric Labels
+
+Metrics include labels for filtering and aggregation:
+
+| Label | Description | Example |
+|-------|-------------|--------|
+| `cluster` | Cluster identifier | `production` |
+| `node_id` | Node identifier | `1`, `2`, `3` |
+| `store` | Store identifier | `1`, `2` |
+| `instance` | Node address | `node1:8080` |
+| `job` | Prometheus job name | `cockroachdb` |
+
+## Alerting Rules
+
+### Prometheus Alert Examples
+
+<CodeGroup>
+```yaml Node Down
+- alert: CockroachDBNodeDown
+  expr: up{job="cockroachdb"} == 0
+  for: 1m
+  labels:
+    severity: critical
+  annotations:
+    summary: "CockroachDB node {{ $labels.instance }} is down"
+```
+
+```yaml Unavailable Ranges
+- alert: CockroachDBUnavailableRanges
+  expr: sum(ranges_unavailable) > 0
+  for: 5m
+  labels:
+    severity: critical
+  annotations:
+    summary: "Cluster has {{ $value }} unavailable ranges"
+```
+
+```yaml High Query Latency
+- alert: CockroachDBHighQueryLatency
+  expr: histogram_quantile(0.99, rate(sql_exec_latency_bucket[5m])) > 1
+  for: 10m
+  labels:
+    severity: warning
+  annotations:
+    summary: "p99 query latency is {{ $value }}s"
+```
+
+```yaml Low Disk Space
+- alert: CockroachDBLowDiskSpace
+  expr: |
+    (capacity_available / (capacity_available + capacity_used)) < 0.15
+  for: 30m
+  labels:
+    severity: warning
+  annotations:
+    summary: "Store {{ $labels.store }} has < 15% free space"
+```
+</CodeGroup>
+
+## SQL Metrics Queries
+
+Query metrics via SQL:
+
+<CodeGroup>
+```sql Node Metrics
+SELECT
+  node_id,
+  store_id,
+  (metrics->>'capacity.available')::BIGINT as available_bytes,
+  (metrics->>'livebytes')::BIGINT as live_bytes,
+  (metrics->>'replicas')::INT as replicas
+FROM crdb_internal.kv_store_status;
+```
+
+```sql Query Statistics
+SELECT 
+  key,
+  (statistics->'statistics'->'cnt')::INT AS execution_count,
+  (statistics->'statistics'->'numRows'->'mean')::FLOAT AS avg_rows
+FROM crdb_internal.statement_statistics
+ORDER BY execution_count DESC
+LIMIT 10;
+```
+
+```sql Runtime Statistics
+SELECT
+  name,
+  value,
+  description
+FROM crdb_internal.node_runtime_info
+WHERE component = 'DB' AND node_id = 1;
+```
+</CodeGroup>
+
+## Best Practices
+
+<Accordion title="Metrics Best Practices">
+  1. **Monitor all nodes**: Aggregate metrics across entire cluster
+  2. **Use percentiles**: p99 and p999 reveal tail latencies
+  3. **Set up alerting**: Proactive alerts prevent outages
+  4. **Track baselines**: Understand normal operating ranges
+  5. **Monitor trends**: Detect gradual degradation
+  6. **Use labels**: Filter and aggregate by node, store, etc.
+  7. **Avoid high cardinality**: Don't create metrics per-user or per-query
+  8. **Sample appropriately**: 10-30s scrape interval is typical
+</Accordion>
+
+## Troubleshooting
+
+### High Query Latency
+
+Investigate with these metrics:
+- `sql.exec.latency` - Query execution time
+- `sql.service.latency` - End-to-end latency  
+- `requests.slow.latch` - Latch contention
+- `requests.slow.raft` - Raft consensus delays
+
+### Storage Issues
+
+Monitor:
+- `capacity.available` - Available disk space
+- `storage.l0-sublevels` - Compaction backlog
+- `rocksdb.block.cache.hit-rate` - Cache efficiency
+- `sys.host.disk.iopsinprogress` - I/O queue depth
+
+### Replication Problems
+
+Check:
+- `ranges.unavailable` - Critical replication issues
+- `ranges.underreplicated` - Missing replicas
+- `liveness.livenodes` - Node availability
+- `leases.transfers.error` - Lease transfer failures
+
+## See Also
+
+- [Monitoring](/admin/monitoring) - Monitoring setup and configuration
+- [Logging](/admin/logging) - Log collection and analysis
+- [Configuration](/admin/configuration) - Performance tuning settings

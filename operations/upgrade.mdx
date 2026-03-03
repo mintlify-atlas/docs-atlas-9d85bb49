@@ -1,0 +1,546 @@
+---
+title: Upgrading CockroachDB
+description: Safely upgrade CockroachDB clusters to newer versions with zero downtime
+---
+
+CockroachDB supports rolling upgrades, allowing you to upgrade cluster versions without downtime. This guide covers upgrade procedures, version compatibility, and best practices.
+
+## Upgrade Overview
+
+CockroachDB's upgrade process involves:
+
+<CardGroup cols={2}>
+  <Card title="Rolling Upgrade" icon="rotate">
+    Upgrade nodes one at a time while the cluster remains operational
+  </Card>
+  <Card title="Version Compatibility" icon="code-compare">
+    Mixed-version clusters run temporarily during upgrades
+  </Card>
+  <Card title="Cluster Version" icon="tag">
+    Internal cluster version finalized after all nodes upgraded
+  </Card>
+  <Card title="Zero Downtime" icon="circle-check">
+    Applications continue running throughout the upgrade
+  </Card>
+</CardGroup>
+
+## Version Compatibility
+
+CockroachDB maintains compatibility between consecutive versions:
+
+### Supported Upgrade Paths
+
+- **Patch Upgrades**: Any patch version to any higher patch within the same major.minor (e.g., v24.1.1 to v24.1.5)
+- **Minor Upgrades**: One minor version at a time (e.g., v24.1.x to v24.2.x)
+- **Major Upgrades**: Must upgrade through each major version (e.g., v23.2 → v24.1 → v24.2)
+
+<Warning>
+**You cannot skip major or minor versions.** Always upgrade sequentially through each version.
+</Warning>
+
+### Version Skew Policy
+
+During a rolling upgrade:
+
+- Nodes can run versions N and N+1 temporarily
+- The cluster operates in "mixed-version mode"
+- Some new features are unavailable until upgrade is finalized
+
+## Pre-Upgrade Checklist
+
+Before starting an upgrade:
+
+<Steps>
+  <Step title="Review Release Notes">
+    Read the release notes for the target version, paying attention to:
+    - Breaking changes
+    - Deprecated features
+    - New cluster settings
+    - Known issues
+  </Step>
+
+  <Step title="Check Version Compatibility">
+    Verify your current version can upgrade directly to the target version.
+    
+    ```sql
+    SELECT version();
+    ```
+  </Step>
+
+  <Step title="Backup the Cluster">
+    Create a full backup before upgrading:
+    
+    ```sql
+    BACKUP INTO 's3://backup-bucket/pre-upgrade?AWS_ACCESS_KEY_ID=xxx&AWS_SECRET_ACCESS_KEY=xxx'
+    WITH revision_history;
+    ```
+    
+    <Warning>
+    Always backup before upgrading. This is your safety net if issues occur.
+    </Warning>
+  </Step>
+
+  <Step title="Test in Staging">
+    Perform a complete upgrade test in a staging environment that mirrors production.
+  </Step>
+
+  <Step title="Review Cluster Health">
+    ```sql
+    -- Check for under-replicated ranges
+    SELECT count(*) FROM crdb_internal.ranges WHERE under_replicated = true;
+    
+    -- Check for unavailable ranges  
+    SELECT count(*) FROM crdb_internal.ranges WHERE unavailable = true;
+    
+    -- Verify all nodes are live
+    SELECT node_id, address, is_live FROM crdb_internal.gossip_nodes;
+    ```
+    
+    Resolve any issues before proceeding.
+  </Step>
+
+  <Step title="Plan Maintenance Window">
+    While upgrades don't require downtime, schedule during low-traffic periods for safety.
+  </Step>
+</Steps>
+
+## Rolling Upgrade Procedure
+
+### Manual Upgrade Process
+
+<Steps>
+  <Step title="Download New Binary">
+    ```bash
+    # Download the new version
+    wget https://binaries.cockroachdb.com/cockroach-v24.2.0.linux-amd64.tgz
+    tar xfz cockroach-v24.2.0.linux-amd64.tgz
+    
+    # Verify the download
+    ./cockroach version
+    ```
+  </Step>
+
+  <Step title="Upgrade First Node">
+    ```bash
+    # Stop the node gracefully
+    kill -TERM $(cat cockroach-data/cockroach.pid)
+    
+    # Wait for the node to stop completely
+    # Check logs: tail -f cockroach-data/logs/cockroach.log
+    
+    # Replace the binary
+    cp cockroach /usr/local/bin/cockroach
+    
+    # Start with the new version
+    cockroach start \
+      --certs-dir=certs \
+      --advertise-addr=<node-address> \
+      --join=<join-addresses> \
+      --background
+    ```
+  </Step>
+
+  <Step title="Verify Node Rejoined">
+    ```sql
+    -- Check node status
+    SELECT node_id, address, build_tag, is_live 
+    FROM crdb_internal.gossip_nodes;
+    ```
+    
+    Ensure the upgraded node is live and running the new version.
+  </Step>
+
+  <Step title="Monitor Cluster Health">
+    ```sql
+    -- Verify no under-replicated ranges
+    SELECT count(*) FROM crdb_internal.ranges WHERE under_replicated = true;
+    
+    -- Check for range issues
+    SELECT count(*) FROM crdb_internal.ranges WHERE unavailable = true;
+    ```
+    
+    Wait for the cluster to stabilize before continuing.
+  </Step>
+
+  <Step title="Repeat for Remaining Nodes">
+    Upgrade each remaining node one at a time, following steps 2-4 for each node.
+    
+    <Note>
+    Allow each node to fully rejoin and stabilize before upgrading the next one.
+    </Note>
+  </Step>
+
+  <Step title="Finalize the Upgrade">
+    After all nodes are upgraded, finalize to enable new features:
+    
+    ```sql
+    SET CLUSTER SETTING version = '24.2';
+    ```
+    
+    <Warning>
+    Finalization is irreversible. You cannot downgrade after this step.
+    </Warning>
+  </Step>
+
+  <Step title="Verify Upgrade Completion">
+    ```sql
+    SHOW CLUSTER SETTING version;
+    ```
+  </Step>
+</Steps>
+
+### Kubernetes Upgrade
+
+For Kubernetes deployments using StatefulSets:
+
+<Steps>
+  <Step title="Update Container Image">
+    ```bash
+    kubectl set image statefulset/cockroachdb \
+      cockroachdb=cockroachdb/cockroach:v24.2.0
+    ```
+  </Step>
+
+  <Step title="Monitor Rolling Update">
+    ```bash
+    # Watch pod updates
+    kubectl rollout status statefulset/cockroachdb
+    
+    # Check pod versions
+    kubectl get pods -l app=cockroachdb -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.containers[0].image}{"\n"}{end}'
+    ```
+  </Step>
+
+  <Step title="Verify Cluster Health">
+    ```bash
+    kubectl exec -it cockroachdb-0 -- \
+      ./cockroach sql --certs-dir=certs --execute="
+        SELECT node_id, address, build_tag, is_live 
+        FROM crdb_internal.gossip_nodes;
+      "
+    ```
+  </Step>
+
+  <Step title="Finalize Upgrade">
+    ```bash
+    kubectl exec -it cockroachdb-0 -- \
+      ./cockroach sql --certs-dir=certs --execute="
+        SET CLUSTER SETTING version = '24.2';
+      "
+    ```
+  </Step>
+</Steps>
+
+## Upgrade Strategies
+
+### Conservative Approach
+
+For mission-critical clusters:
+
+<Steps>
+  <Step title="Partial Upgrade">
+    Upgrade one node and monitor for 24-48 hours before continuing.
+  </Step>
+
+  <Step title="Gradual Rollout">
+    Upgrade remaining nodes over several days, one per day.
+  </Step>
+
+  <Step title="Delayed Finalization">
+    Wait 1-2 weeks after all nodes are upgraded before finalizing.
+  </Step>
+</Steps>
+
+### Standard Approach
+
+For typical production clusters:
+
+<Steps>
+  <Step title="Rolling Upgrade">
+    Upgrade all nodes in a single maintenance window, one at a time.
+  </Step>
+
+  <Step title="Observation Period">
+    Monitor for 24-72 hours in mixed-version mode.
+  </Step>
+
+  <Step title="Finalize">
+    Complete the upgrade by finalizing the cluster version.
+  </Step>
+</Steps>
+
+## Monitoring During Upgrade
+
+### Key Metrics to Watch
+
+<Accordion title="Critical Metrics">
+- **Node Liveness**: All nodes should remain live
+- **Under-replicated Ranges**: Should return to 0 after each node upgrade
+- **Query Latency**: Monitor for increases during upgrade
+- **Error Rates**: Watch for spikes in application errors
+- **CPU/Memory**: May increase temporarily during upgrades
+- **Disk I/O**: Rebalancing may increase I/O
+</Accordion>
+
+### Monitoring Commands
+
+```sql Check Node Versions
+SELECT 
+  node_id,
+  address,
+  build_tag,
+  is_live,
+  started_at
+FROM crdb_internal.gossip_nodes
+ORDER BY node_id;
+```
+
+```sql Check Replica Health
+SELECT 
+  SUM(CASE WHEN under_replicated THEN 1 ELSE 0 END) AS under_replicated,
+  SUM(CASE WHEN over_replicated THEN 1 ELSE 0 END) AS over_replicated,
+  SUM(CASE WHEN unavailable THEN 1 ELSE 0 END) AS unavailable
+FROM crdb_internal.ranges;
+```
+
+```sql Monitor Running Jobs
+SHOW JOBS 
+WHERE status = 'running' 
+ORDER BY created DESC;
+```
+
+## Troubleshooting Upgrades
+
+### Node Won't Start After Upgrade
+
+<Steps>
+  <Step title="Check Logs">
+    ```bash
+    tail -100 cockroach-data/logs/cockroach.log
+    ```
+    
+    Look for error messages indicating the issue.
+  </Step>
+
+  <Step title="Verify Binary">
+    ```bash
+    ./cockroach version
+    ```
+    
+    Ensure the correct version is installed.
+  </Step>
+
+  <Step title="Check Disk Space">
+    ```bash
+    df -h /path/to/cockroach-data
+    ```
+  </Step>
+
+  <Step title="Rollback if Needed">
+    If the new version won't start, revert to the previous binary:
+    
+    ```bash
+    cp /backup/cockroach.old /usr/local/bin/cockroach
+    cockroach start --certs-dir=certs --advertise-addr=<node-address> --join=<join-addresses> --background
+    ```
+  </Step>
+</Steps>
+
+### Cluster Performance Degradation
+
+<CardGroup cols={2}>
+  <Card title="Pause Upgrade">
+    Stop upgrading additional nodes until performance stabilizes
+  </Card>
+  <Card title="Check Rebalancing">
+    Reduce rebalancing rate if it's impacting performance
+  </Card>
+  <Card title="Review Queries">
+    Check for long-running queries or locks
+  </Card>
+  <Card title="Monitor Resources">
+    Verify CPU, memory, and disk aren't saturated
+  </Card>
+</CardGroup>
+
+```sql Reduce Rebalancing Rate
+SET CLUSTER SETTING kv.snapshot_rebalance.max_rate = '32MiB';
+```
+
+### Cannot Finalize Upgrade
+
+```sql Check Node Versions
+SELECT node_id, build_tag 
+FROM crdb_internal.gossip_nodes
+WHERE is_live = true;
+```
+
+Ensure all live nodes are running the target version before finalizing.
+
+## Rollback Procedures
+
+### Before Finalization
+
+You can rollback before finalizing the cluster version:
+
+<Steps>
+  <Step title="Stop Upgrading">
+    Don't upgrade any more nodes.
+  </Step>
+
+  <Step title="Downgrade Upgraded Nodes">
+    Replace the new binary with the old version on upgraded nodes:
+    
+    ```bash
+    kill -TERM $(cat cockroach-data/cockroach.pid)
+    cp /backup/cockroach.old /usr/local/bin/cockroach
+    cockroach start --certs-dir=certs --advertise-addr=<node-address> --join=<join-addresses> --background
+    ```
+  </Step>
+
+  <Step title="Verify Rollback">
+    ```sql
+    SELECT node_id, build_tag FROM crdb_internal.gossip_nodes;
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+**After finalization, rollback is not possible.** You can only move forward to newer versions.
+</Warning>
+
+### Restore from Backup
+
+If issues occur after finalization:
+
+<Steps>
+  <Step title="Deploy New Cluster">
+    Create a fresh cluster running the previous version.
+  </Step>
+
+  <Step title="Restore Backup">
+    ```sql
+    RESTORE FROM LATEST IN 's3://backup-bucket/pre-upgrade?AWS_ACCESS_KEY_ID=xxx&AWS_SECRET_ACCESS_KEY=xxx';
+    ```
+  </Step>
+
+  <Step title="Redirect Applications">
+    Update application connection strings to the restored cluster.
+  </Step>
+</Steps>
+
+## Post-Upgrade Tasks
+
+<Steps>
+  <Step title="Update Statistics">
+    ```sql
+    -- Let automatic stats collection run, or manually trigger:
+    ANALYZE TABLE users;
+    ```
+  </Step>
+
+  <Step title="Review New Features">
+    Explore new cluster settings and features in the release notes.
+  </Step>
+
+  <Step title="Update Documentation">
+    Document the new version in your infrastructure docs.
+  </Step>
+
+  <Step title="Remove Old Binaries">
+    Clean up old binary backups after confirming stability.
+  </Step>
+
+  <Step title="Schedule Next Upgrade">
+    Plan for the next upgrade based on release schedules.
+  </Step>
+</Steps>
+
+## Upgrade Best Practices
+
+<Steps>
+  <Step title="Stay Current">
+    Upgrade regularly to avoid large version gaps and benefit from bug fixes.
+  </Step>
+
+  <Step title="Test First">
+    Always test upgrades in staging before production.
+  </Step>
+
+  <Step title="Backup First">
+    Never upgrade without a recent backup.
+  </Step>
+
+  <Step title="One Node at a Time">
+    Never upgrade multiple nodes simultaneously.
+  </Step>
+
+  <Step title="Monitor Closely">
+    Watch metrics continuously during and after upgrades.
+  </Step>
+
+  <Step title="Document Everything">
+    Keep detailed notes of upgrade procedures and any issues.
+  </Step>
+
+  <Step title="Plan for Rollback">
+    Always have a tested rollback plan before starting.
+  </Step>
+</Steps>
+
+## Automated Upgrade Considerations
+
+<Note>
+While automation is possible, manual oversight during upgrades is recommended for production clusters:
+
+- **Semi-automated**: Automate binary deployment, but manually verify each step
+- **Full automation**: Only for non-critical environments or after extensive testing
+- **Monitoring integration**: Automated upgrades should pause on health check failures
+</Note>
+
+## Upgrade Planning Template
+
+<Accordion title="Upgrade Plan Template">
+**Upgrade Details:**
+- Current Version: ____________
+- Target Version: ____________
+- Scheduled Date: ____________
+- Duration Estimate: ____________
+
+**Pre-Upgrade:**
+- [ ] Release notes reviewed
+- [ ] Backup completed and verified
+- [ ] Staging upgrade completed
+- [ ] Stakeholders notified
+- [ ] Rollback plan documented
+- [ ] Monitoring dashboards ready
+
+**During Upgrade:**
+- [ ] Node 1 upgraded and verified
+- [ ] Node 2 upgraded and verified
+- [ ] Node 3 upgraded and verified
+- [ ] Node N upgraded and verified
+- [ ] All nodes running target version
+- [ ] Cluster health verified
+
+**Post-Upgrade:**
+- [ ] Upgrade finalized
+- [ ] Application testing completed
+- [ ] Performance validated
+- [ ] Documentation updated
+- [ ] Old binaries archived
+</Accordion>
+
+## Next Steps
+
+<CardGroup cols={3}>
+  <Card title="Deployment" icon="server" href="./deployment">
+    Review deployment options
+  </Card>
+  <Card title="Backup & Restore" icon="floppy-disk" href="./backup-restore">
+    Implement backup strategies
+  </Card>
+  <Card title="Scaling" icon="chart-line" href="./scaling">
+    Scale your cluster
+  </Card>
+</CardGroup>

@@ -1,0 +1,357 @@
+---
+title: Deployment Strategies
+description: Learn how to deploy CockroachDB on different platforms and environments
+---
+
+CockroachDB can be deployed across various platforms and environments, from local development to production clusters on cloud providers or on-premises infrastructure.
+
+## Deployment Options
+
+CockroachDB offers several deployment strategies to match your infrastructure needs:
+
+<CardGroup cols={2}>
+  <Card title="CockroachCloud" icon="cloud">
+    Fully managed CockroachDB service with automated operations
+  </Card>
+  <Card title="Kubernetes" icon="dharmachakra">
+    Container orchestration for automated scaling and management
+  </Card>
+  <Card title="Manual Deployment" icon="server">
+    Direct installation on physical or virtual machines
+  </Card>
+  <Card title="Docker" icon="docker">
+    Containerized deployment for development and testing
+  </Card>
+</CardGroup>
+
+## Single-Node Deployment
+
+For development and testing, start a single-node cluster:
+
+<Steps>
+  <Step title="Download CockroachDB">
+    Download the latest CockroachDB binary for your platform from the official releases.
+  </Step>
+
+  <Step title="Start the Node">
+    ```bash
+    cockroach start-single-node \
+      --insecure \
+      --store=path=/mnt/cockroach-data \
+      --listen-addr=localhost:26257 \
+      --http-addr=localhost:8080
+    ```
+    
+    <Note>
+    The `--insecure` flag disables security for testing. Never use this in production.
+    </Note>
+  </Step>
+
+  <Step title="Access the SQL Shell">
+    ```bash
+    cockroach sql --insecure --host=localhost:26257
+    ```
+  </Step>
+</Steps>
+
+## Multi-Node Cluster
+
+### Manual Deployment on Multiple Machines
+
+<Steps>
+  <Step title="Start the First Node">
+    ```bash
+    cockroach start \
+      --certs-dir=certs \
+      --advertise-addr=<node1-address> \
+      --join=<node1-address>,<node2-address>,<node3-address> \
+      --cache=.25 \
+      --max-sql-memory=.25 \
+      --background
+    ```
+  </Step>
+
+  <Step title="Start Additional Nodes">
+    Repeat the start command on each node, adjusting `--advertise-addr` to each node's address:
+    
+    ```bash
+    cockroach start \
+      --certs-dir=certs \
+      --advertise-addr=<node2-address> \
+      --join=<node1-address>,<node2-address>,<node3-address> \
+      --cache=.25 \
+      --max-sql-memory=.25 \
+      --background
+    ```
+  </Step>
+
+  <Step title="Initialize the Cluster">
+    From any node, run the init command once:
+    
+    ```bash
+    cockroach init --certs-dir=certs --host=<any-node-address>
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+Ensure all nodes can communicate with each other on port 26257. Configure your firewall rules accordingly.
+</Warning>
+
+## Kubernetes Deployment
+
+Deploy CockroachDB as a StatefulSet on Kubernetes for automated orchestration:
+
+<CodeGroup>
+```yaml StatefulSet (Insecure)
+apiVersion: v1
+kind: Service
+metadata:
+  name: cockroachdb
+  labels:
+    app: cockroachdb
+spec:
+  ports:
+  - port: 26257
+    targetPort: 26257
+    name: grpc
+  - port: 8080
+    targetPort: 8080
+    name: http
+  clusterIP: None
+  selector:
+    app: cockroachdb
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: cockroachdb
+spec:
+  serviceName: "cockroachdb"
+  replicas: 3
+  selector:
+    matchLabels:
+      app: cockroachdb
+  template:
+    metadata:
+      labels:
+        app: cockroachdb
+    spec:
+      containers:
+      - name: cockroachdb
+        image: cockroachdb/cockroach:latest
+        ports:
+        - containerPort: 26257
+          name: grpc
+        - containerPort: 8080
+          name: http
+        command:
+          - "/bin/bash"
+          - "-ecx"
+          - |
+            exec /cockroach/cockroach start \
+            --logtostderr \
+            --insecure \
+            --advertise-host $(hostname -f) \
+            --http-addr 0.0.0.0 \
+            --join cockroachdb-0.cockroachdb,cockroachdb-1.cockroachdb,cockroachdb-2.cockroachdb \
+            --cache 25% \
+            --max-sql-memory 25%
+        volumeMounts:
+        - name: datadir
+          mountPath: /cockroach/cockroach-data
+  volumeClaimTemplates:
+  - metadata:
+      name: datadir
+    spec:
+      accessModes:
+        - "ReadWriteOnce"
+      resources:
+        requests:
+          storage: 100Gi
+```
+
+```yaml Cluster Init Job
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cluster-init
+spec:
+  template:
+    spec:
+      containers:
+      - name: cluster-init
+        image: cockroachdb/cockroach:latest
+        command:
+          - "/cockroach/cockroach"
+          - "init"
+          - "--insecure"
+          - "--host=cockroachdb-0.cockroachdb"
+      restartPolicy: OnFailure
+```
+</CodeGroup>
+
+### Deploy to Kubernetes
+
+<Steps>
+  <Step title="Apply the StatefulSet">
+    ```bash
+    kubectl apply -f cockroachdb-statefulset.yaml
+    ```
+  </Step>
+
+  <Step title="Wait for Pods to Start">
+    ```bash
+    kubectl get pods -l app=cockroachdb
+    ```
+  </Step>
+
+  <Step title="Initialize the Cluster">
+    ```bash
+    kubectl apply -f cluster-init.yaml
+    ```
+  </Step>
+
+  <Step title="Access the SQL Client">
+    ```bash
+    kubectl run cockroachdb-client --rm -it \
+      --image=cockroachdb/cockroach \
+      --restart=Never \
+      -- sql --insecure --host=cockroachdb-0.cockroachdb
+    ```
+  </Step>
+</Steps>
+
+## Docker Deployment
+
+For quick local development with Docker:
+
+```bash Docker Single Node
+# Create a bridge network
+docker network create -d bridge roachnet
+
+# Start CockroachDB container
+docker run -d \
+  --name=roach1 \
+  --hostname=roach1 \
+  --net=roachnet \
+  -p 26257:26257 \
+  -p 8080:8080 \
+  -v "roach1:/cockroach/cockroach-data" \
+  cockroachdb/cockroach:latest \
+  start-single-node --insecure
+```
+
+### Multi-Node Docker Cluster
+
+<Accordion title="Three-Node Docker Setup">
+```bash
+# Create network
+docker network create -d bridge roachnet
+
+# Start node 1
+docker run -d \
+  --name=roach1 \
+  --hostname=roach1 \
+  --net=roachnet \
+  -p 26257:26257 -p 8080:8080 \
+  -v "roach1:/cockroach/cockroach-data" \
+  cockroachdb/cockroach:latest start \
+  --insecure \
+  --join=roach1,roach2,roach3
+
+# Start node 2
+docker run -d \
+  --name=roach2 \
+  --hostname=roach2 \
+  --net=roachnet \
+  -v "roach2:/cockroach/cockroach-data" \
+  cockroachdb/cockroach:latest start \
+  --insecure \
+  --join=roach1,roach2,roach3
+
+# Start node 3
+docker run -d \
+  --name=roach3 \
+  --hostname=roach3 \
+  --net=roachnet \
+  -v "roach3:/cockroach/cockroach-data" \
+  cockroachdb/cockroach:latest start \
+  --insecure \
+  --join=roach1,roach2,roach3
+
+# Initialize cluster
+docker exec -it roach1 \
+  ./cockroach init --insecure
+```
+</Accordion>
+
+## Cloud Provider Deployments
+
+### AWS Deployment Considerations
+
+<CardGroup cols={2}>
+  <Card title="VPC Configuration">
+    Create a VPC with subnets across multiple availability zones for high availability
+  </Card>
+  <Card title="Security Groups">
+    Configure security groups to allow traffic on ports 26257 (inter-node) and 8080 (admin UI)
+  </Card>
+  <Card title="Instance Types">
+    Use compute-optimized instances (c5, c6i) for better performance
+  </Card>
+  <Card title="Storage">
+    Use EBS volumes with provisioned IOPS (io1/io2) for production workloads
+  </Card>
+</CardGroup>
+
+### GCP Deployment Considerations
+
+- Use **Compute Engine** instances with local SSDs for optimal performance
+- Deploy across multiple zones within a region for availability
+- Configure **VPC firewall rules** for node communication
+- Use **persistent disks** with SSD for cost-effective storage
+
+### Azure Deployment Considerations
+
+- Use **Premium SSD** managed disks for storage
+- Deploy across **availability zones** for redundancy
+- Configure **Network Security Groups** for traffic control
+- Use **Ds-series** or **Fs-series** VMs for optimal performance
+
+## Resource Requirements
+
+<Note>
+Production deployments should follow these minimum recommendations:
+
+- **CPU**: 4+ cores per node
+- **RAM**: 16GB+ per node
+- **Storage**: SSD-backed storage with 500+ IOPS
+- **Network**: 1Gbps+ between nodes
+- **Nodes**: Minimum of 3 nodes for fault tolerance
+</Note>
+
+## Environment Variables
+
+The Docker entrypoint script supports several environment variables:
+
+```bash
+COCKROACH_DATABASE=defaultdb      # Default database name
+COCKROACH_USER=myuser             # Create a default user
+COCKROACH_PASSWORD=mypassword     # Set user password
+COCKROACH_ARGS="start --insecure" # Pass custom arguments
+```
+
+## Next Steps
+
+<CardGroup cols={3}>
+  <Card title="Security Configuration" icon="lock" href="./security">
+    Configure certificates and authentication
+  </Card>
+  <Card title="Scaling" icon="chart-line" href="./scaling">
+    Learn how to scale your cluster
+  </Card>
+  <Card title="Backup & Restore" icon="database" href="./backup-restore">
+    Set up backup strategies
+  </Card>
+</CardGroup>

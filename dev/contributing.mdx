@@ -1,0 +1,306 @@
+---
+title: Contributing to CockroachDB
+description: Guidelines for contributing to the CockroachDB project
+---
+
+We welcome contributions from the community! Whether you're fixing bugs, adding features, improving documentation, or helping with testing, your contributions make CockroachDB better.
+
+## Getting Started
+
+### Choose Your Project
+
+CockroachDB offers different contribution paths based on your experience and interests:
+
+<CardGroup cols={2}>
+  <Card title="New Developers" icon="seedling">
+    **To-Do Apps Project**
+    
+    Build a to-do app using CockroachDB with your favorite language/ORM.
+    
+    [View Repository →](https://github.com/cockroachdb/cockroachdb-todo-apps)
+  </Card>
+  
+  <Card title="Go Developers" icon="code">
+    **Core CockroachDB**
+    
+    Work on the main CockroachDB codebase. Check out good first issues.
+    
+    [Good First Issues →](https://github.com/cockroachdb/cockroach/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22)
+  </Card>
+  
+  <Card title="Kubernetes Enthusiasts" icon="dharmachakra">
+    **Kubernetes Operator**
+    
+    Contribute to the CockroachDB Kubernetes Operator.
+    
+    [Operator Issues →](https://github.com/cockroachdb/cockroach-operator/labels/good%20first%20issue)
+  </Card>
+  
+  <Card title="Documentation" icon="book">
+    **Docs & Writing**
+    
+    Help improve CockroachDB documentation.
+    
+    [Docs Issues →](https://github.com/cockroachdb/docs/issues?q=is%3Aopen+is%3Aissue+label%3Agood-first-issue)
+  </Card>
+</CardGroup>
+
+## Development Workflow
+
+<Steps>
+  <Step title="Join the Community">
+    Join our [Community Slack](https://go.crdb.dev/p/slack) (there's a dedicated `#contributors` channel!) to ask questions and connect with other contributors.
+    
+    Please follow our [Code of Conduct](https://docs.google.com/document/d/1_BB3IrsAVglDNPy37Z6KQlii_c3fYETFlWMMBUpbY1M/edit#) to help keep the community welcoming.
+  </Step>
+
+  <Step title="Set Up Your Environment">
+    Fork and clone the repository:
+    
+    ```bash
+    git clone https://github.com/YOUR_USERNAME/cockroach.git
+    cd cockroach
+    git remote add upstream https://github.com/cockroachdb/cockroach.git
+    ```
+    
+    Install dependencies:
+    
+    ```bash
+    ./build/bootstrap/bootstrap-debian.sh
+    ```
+  </Step>
+
+  <Step title="Find or Create an Issue">
+    Before starting work:
+    
+    - Check existing issues or create a new one
+    - Comment on the issue to claim it
+    - Discuss your approach for larger changes
+    
+    <Note>
+      For significant features or architectural changes, consider writing an RFC first. See the [RFC process](https://wiki.crdb.io/).
+    </Note>
+  </Step>
+
+  <Step title="Create a Branch">
+    ```bash
+    git checkout -b your-feature-branch
+    ```
+    
+    Use descriptive branch names like `fix-kvserver-leak` or `add-json-functions`.
+  </Step>
+
+  <Step title="Make Your Changes">
+    Follow the coding guidelines and ensure your changes:
+    
+    - Are well-tested
+    - Include appropriate comments
+    - Follow the style guide
+    - Don't break existing functionality
+  </Step>
+
+  <Step title="Test Your Changes">
+    Run relevant tests:
+    
+    ```bash
+    # Run tests for affected packages
+    ./dev test pkg/your/package -v
+    
+    # Run specific test
+    ./dev test pkg/sql -f=TestYourFeature -v
+    ```
+    
+    See the [Testing Guide](/dev/testing) for more details.
+  </Step>
+
+  <Step title="Format Your Code">
+    Use `crlfmt` (not `gofmt`):
+    
+    ```bash
+    crlfmt -w -tab 2 your_file.go
+    ```
+    
+    <Warning>
+      CockroachDB uses its own formatter `crlfmt` that enforces 100-column code lines, 80-column comments, and specific import grouping.
+    </Warning>
+  </Step>
+
+  <Step title="Generate Code (if needed)">
+    If you modified protobufs, parsers, or other generated code:
+    
+    ```bash
+    ./dev generate go
+    ./dev generate bazel
+    ```
+  </Step>
+
+  <Step title="Submit Your Pull Request">
+    Push your branch and create a PR:
+    
+    ```bash
+    git push origin your-feature-branch
+    ```
+    
+    In your PR description:
+    - Reference the issue number (e.g., "Fixes #12345")
+    - Explain what changed and why
+    - Include any relevant context
+  </Step>
+</Steps>
+
+## Coding Standards
+
+### Code Quality Guidelines
+
+CockroachDB is a complex distributed system. Write code with future maintainers in mind:
+
+<AccordionGroup>
+  <Accordion title="Documentation & Comments">
+    - Explain key concepts and abstractions clearly
+    - State lifecycles and ownership explicitly
+    - Use examples to make code accessible
+    - Comments should add depth, not repeat the code
+    
+    **Good Example:**
+    ```go
+    // proposalQuota tracks the maximum number of bytes that can be used by
+    // in-flight Raft proposals. It ensures bounded memory usage for the
+    // proposal buffer by blocking proposals when the quota is exhausted.
+    type proposalQuota struct {
+        // ...
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Code Formatting">
+    - Use `crlfmt -w -tab 2 <file>.go` for formatting
+    - Enforces 100-column code lines
+    - 80-column comments
+    - CockroachDB-specific import grouping
+    - `crlfmt` accepts one filename at a time
+  </Accordion>
+
+  <Accordion title="Distributed System Awareness">
+    CockroachDB supports rolling upgrades, so:
+    
+    - Be mindful of compatibility when changing shared state
+    - Consider inter-process communication carefully
+    - Review `pkg/clusterversion` for version handling
+    - Test mixed-version scenarios when relevant
+  </Accordion>
+
+  <Accordion title="Testing Requirements">
+    - Write tests for new functionality
+    - Update tests when changing behavior
+    - Include both unit and integration tests
+    - Consider edge cases and failure scenarios
+    - Add logic test files for SQL features
+  </Accordion>
+</AccordionGroup>
+
+### Commit Message Guidelines
+
+Follow the commit message format used by the project:
+
+```
+pkg: brief summary of change
+
+Longer explanation of what changed and why. Focus on the "why"
+rather than the "what" - the code shows what changed.
+
+Fixes #12345
+
+Release note (category): description of user-facing change
+```
+
+<Note>
+  See the wiki for detailed [commit message guidelines](https://wiki.crdb.io/wiki/spaces/CRDB/pages/73204033/Contributing+to+CockroachDB).
+</Note>
+
+## Code Review Process
+
+### What Reviewers Look For
+
+<CardGroup cols={2}>
+  <Card title="Technical Correctness" icon="check">
+    - Logic is sound
+    - No race conditions
+    - Proper error handling
+    - Performance implications
+  </Card>
+  
+  <Card title="Code Clarity" icon="eye">
+    - Clear naming
+    - Good documentation
+    - Accessible to non-experts
+    - Examples where helpful
+  </Card>
+  
+  <Card title="Testing" icon="flask">
+    - Adequate test coverage
+    - Tests are meaningful
+    - Edge cases covered
+    - No flaky tests
+  </Card>
+  
+  <Card title="Style & Convention" icon="paintbrush">
+    - Follows project patterns
+    - Properly formatted
+    - Minor nits prefixed with "nit:"
+    - Consistent with codebase
+  </Card>
+</CardGroup>
+
+### Responding to Reviews
+
+- Address all comments, even if just to acknowledge
+- Push new commits rather than force-pushing (makes review easier)
+- Mark resolved threads as resolved
+- Ask questions if feedback is unclear
+- Be open to suggestions and alternative approaches
+
+## Resources
+
+<CardGroup cols={2}>
+  <Card title="Contributing Wiki" icon="book-open" href="https://wiki.crdb.io/wiki/spaces/CRDB/pages/73204033/Contributing+to+CockroachDB">
+    Comprehensive contributor guidelines on the public wiki
+  </Card>
+  
+  <Card title="Your First PR" icon="code-pull-request" href="https://wiki.crdb.io/wiki/spaces/CRDB/pages/181633464/Your+first+CockroachDB+PR">
+    Step-by-step guide for first-time contributors
+  </Card>
+  
+  <Card title="Community Slack" icon="slack" href="https://go.crdb.dev/p/slack">
+    Join #contributors channel for help and discussion
+  </Card>
+  
+  <Card title="Code of Conduct" icon="handshake" href="https://github.com/cockroachdb/code-of-conduct">
+    Guidelines for community participation
+  </Card>
+</CardGroup>
+
+## Additional Topics
+
+The [contributor wiki](https://wiki.crdb.io/wiki/spaces/CRDB/pages/73204033/Contributing+to+CockroachDB) covers:
+
+- Repository layout and organization
+- Commenting guidelines and standards
+- How to write release notes
+- Submitting changes for review
+- Using continuous integration (CI)
+- Troubleshooting common issues
+- Performance testing guidelines
+- Documentation standards
+
+And many other practical topics for contributors.
+
+## Getting Help
+
+If you need assistance:
+
+1. Check the [contributor wiki](https://wiki.crdb.io/)
+2. Ask in the `#contributors` Slack channel
+3. Comment on the relevant GitHub issue
+4. Tag reviewers or maintainers for specific questions
+
+We're here to help make your contribution successful!

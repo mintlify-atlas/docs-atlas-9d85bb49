@@ -1,0 +1,495 @@
+---
+title: Code Structure & Architecture
+description: Understanding CockroachDB's codebase organization and key components
+---
+
+CockroachDB is a large, complex distributed database written in Go. Understanding the code structure helps you navigate the codebase and find the right place for your changes.
+
+## Repository Layout
+
+The CockroachDB repository is organized into several top-level directories:
+
+<CardGroup cols={2}>
+  <Card title="pkg/" icon="box">
+    **Core Package Directory**
+    
+    Contains all Go packages that make up CockroachDB. This is where most development happens.
+  </Card>
+  
+  <Card title="build/" icon="wrench">
+    **Build Infrastructure**
+    
+    Build scripts, Docker configurations, toolchains, and CI/CD infrastructure.
+  </Card>
+  
+  <Card title="docs/" icon="book">
+    **Design Documents**
+    
+    RFCs, design documents, and technical notes about CockroachDB architecture.
+  </Card>
+  
+  <Card title="licenses/" icon="certificate">
+    **Licensing**
+    
+    License information and third-party notices.
+  </Card>
+</CardGroup>
+
+## Core Packages Overview
+
+The `pkg/` directory contains the main CockroachDB components. Here are the key areas:
+
+### SQL Layer
+
+The SQL layer handles query parsing, optimization, and execution.
+
+<AccordionGroup>
+  <Accordion title="pkg/sql/ - SQL Execution">
+    The main SQL package coordinates query execution:
+    
+    - **Parser** (`pkg/sql/parser/`): Parses SQL statements into AST
+    - **Semantic Tree** (`pkg/sql/sem/tree/`): Abstract syntax tree definitions
+    - **Type System** (`pkg/sql/types/`): SQL type definitions and operations
+    - **Optimizer** (`pkg/sql/opt/`): Cost-based query optimizer
+    - **Execution** (`pkg/sql/exec*.go`): Query execution coordination
+    - **Built-ins** (`pkg/sql/sem/builtins/`): SQL function implementations
+    
+    **Team:** SQL Queries, SQL Foundations
+  </Accordion>
+
+  <Accordion title="pkg/sql/opt/ - Query Optimizer">
+    Cost-based optimizer that transforms SQL queries:
+    
+    - **Optgen Rules**: Transformation rules for optimization
+    - **Memo**: Compact representation of query alternatives
+    - **Statistics** (`pkg/sql/stats/`): Table statistics for cost estimation
+    - **Exec Builder** (`pkg/sql/opt/exec/`): Converts optimized plan to execution
+    
+    **Team:** SQL Queries
+  </Accordion>
+
+  <Accordion title="pkg/sql/execinfra/ - Distributed SQL">
+    Infrastructure for distributed SQL execution:
+    
+    - **DistSQL**: Distributed query execution framework
+    - **Processors**: Query operators (joins, aggregations, etc.)
+    - **Flow Infrastructure** (`pkg/sql/flowinfra/`): Scheduling and coordination
+    
+    **Team:** SQL Queries
+  </Accordion>
+
+  <Accordion title="pkg/sql/catalog/ - Schema Management">
+    Database catalog and schema management:
+    
+    - Table/index/column descriptors
+    - Schema change infrastructure
+    - Multi-region configuration
+    - Privilege management
+    
+    **Team:** SQL Foundations
+  </Accordion>
+
+  <Accordion title="pkg/sql/schemachanger/ - Declarative Schema Changer">
+    New declarative schema change framework:
+    
+    - Job-based schema changes
+    - Support for online schema changes
+    - Handles complex DDL operations
+    
+    **Team:** SQL Foundations
+  </Accordion>
+</AccordionGroup>
+
+### KV Layer
+
+The KV layer provides distributed, transactional key-value storage.
+
+<AccordionGroup>
+  <Accordion title="pkg/kv/ - Key-Value Client">
+    Client interface to the distributed KV store:
+    
+    - **KV Client** (`pkg/kv/kvclient/`): High-level KV operations
+    - **Transaction Coordinator** (`pkg/kv/kvclient/kvcoord/`): Coordinates distributed transactions
+    - **Rangefeed** (`pkg/kv/kvclient/rangefeed/`): Streaming change notifications
+    - **Batch Operations**: Batching and pipelining
+    
+    **Team:** KV
+  </Accordion>
+
+  <Accordion title="pkg/kv/kvserver/ - KV Server">
+    Core distributed storage engine:
+    
+    - **Replica Management**: Range replicas and replication
+    - **Raft Integration**: Consensus via Raft
+    - **Range Operations**: Splits, merges, rebalancing
+    - **Leases** (`pkg/kv/kvserver/leases/`): Range lease management
+    - **Consistency Checks**: Replica consistency verification
+    - **Allocator** (`pkg/kv/kvserver/allocator/`): Replica placement decisions
+    
+    **Team:** KV
+  </Accordion>
+
+  <Accordion title="pkg/kv/kvserver/concurrency/ - Concurrency Control">
+    Transaction concurrency control:
+    
+    - Lock management
+    - Conflict resolution
+    - Wait queues
+    - Deadlock detection
+    
+    **Team:** KV
+  </Accordion>
+
+  <Accordion title="pkg/storage/ - Storage Engine">
+    Underlying storage engine (Pebble):
+    
+    - RocksDB/Pebble interface
+    - Iterator abstractions
+    - Filesystem management
+    - Encryption at rest
+    
+    **Team:** Storage
+  </Accordion>
+</AccordionGroup>
+
+### Distribution & Replication
+
+<AccordionGroup>
+  <Accordion title="pkg/raft/ - Raft Consensus">
+    Raft consensus algorithm implementation:
+    
+    - Leader election
+    - Log replication
+    - Snapshot handling
+    - Configuration changes
+    
+    Based on etcd/raft with CockroachDB-specific modifications.
+    
+    **Team:** KV
+  </Accordion>
+
+  <Accordion title="pkg/gossip/ - Gossip Protocol">
+    Cluster membership and information dissemination:
+    
+    - Node discovery
+    - Cluster metadata distribution
+    - Network topology
+    
+    **Team:** KV Distribution
+  </Accordion>
+
+  <Accordion title="pkg/spanconfig/ - Span Configs">
+    Range configuration and zone configs:
+    
+    - Replication zones
+    - Data placement policies
+    - Multi-region configuration
+    
+    **Team:** KV, SQL Foundations
+  </Accordion>
+</AccordionGroup>
+
+### Jobs & Background Work
+
+<AccordionGroup>
+  <Accordion title="pkg/jobs/ - Job Infrastructure">
+    Distributed job execution framework:
+    
+    - Job scheduling and execution
+    - Progress tracking
+    - Job resumption after failures
+    - Used by backups, imports, schema changes
+    
+    **Team:** Jobs, Disaster Recovery
+  </Accordion>
+
+  <Accordion title="pkg/backup/ - Backup & Restore">
+    Database backup and restore:
+    
+    - Full and incremental backups
+    - Point-in-time restore
+    - Cross-cluster restore
+    
+    **Team:** Disaster Recovery
+  </Accordion>
+
+  <Accordion title="pkg/ccl/changefeedccl/ - Change Data Capture">
+    Change feeds for streaming database changes:
+    
+    - Row-level change notifications
+    - Multiple sink types (Kafka, webhooks)
+    - Exactly-once delivery guarantees
+    
+    **Team:** CDC
+  </Accordion>
+</AccordionGroup>
+
+### Server & Observability
+
+<AccordionGroup>
+  <Accordion title="pkg/server/ - Server Infrastructure">
+    HTTP and RPC servers, admin UI, APIs:
+    
+    - Node initialization
+    - HTTP/RPC endpoints
+    - Admin UI serving
+    - Multi-tenancy infrastructure
+    - Status and metrics APIs
+    
+    **Team:** Server, Observability
+  </Accordion>
+
+  <Accordion title="pkg/cli/ - Command-Line Interface">
+    The `cockroach` CLI command:
+    
+    - `start` command for starting nodes
+    - `sql` command for SQL shell
+    - Various debug and admin commands
+    - Demo mode for local clusters
+    
+    **Team:** CLI
+  </Accordion>
+
+  <Accordion title="pkg/util/log/ - Logging">
+    Structured logging infrastructure:
+    
+    - Log channels and sinks
+    - Structured log format
+    - Redaction for sensitive data
+    - Log file management
+    
+    **Team:** Observability
+  </Accordion>
+
+  <Accordion title="pkg/util/metric/ - Metrics">
+    Metrics collection and export:
+    
+    - Prometheus-compatible metrics
+    - Counters, gauges, histograms
+    - Time-series data collection
+    
+    **Team:** Observability
+  </Accordion>
+
+  <Accordion title="pkg/util/tracing/ - Distributed Tracing">
+    Distributed request tracing:
+    
+    - Span creation and propagation
+    - Integration with OpenTelemetry
+    - Trace visualization
+    
+    **Team:** Observability
+  </Accordion>
+</AccordionGroup>
+
+### Testing & Development Tools
+
+<AccordionGroup>
+  <Accordion title="pkg/cmd/dev/ - Dev Tool">
+    The `./dev` development tool:
+    
+    - Build orchestration
+    - Test execution
+    - Code generation
+    - Developer workflow automation
+    
+    **Team:** Dev Infrastructure
+  </Accordion>
+
+  <Accordion title="pkg/cmd/roachtest/ - Roachtests">
+    Large-scale integration tests:
+    
+    - Cluster-level testing
+    - Performance benchmarks
+    - Chaos testing
+    - Mixed-version tests
+    
+    **Team:** Test Engineering
+  </Accordion>
+
+  <Accordion title="pkg/testutils/ - Test Utilities">
+    Common testing utilities:
+    
+    - Test server creation
+    - SQL test helpers
+    - Temporary directories
+    - Assertion helpers
+    
+    **Team:** Test Engineering
+  </Accordion>
+
+  <Accordion title="pkg/workload/ - Workload Generators">
+    Benchmark and test workload generators:
+    
+    - TPC-C, TPC-H benchmarks
+    - YCSB workload
+    - Custom workload definitions
+    
+    **Team:** Test Engineering
+  </Accordion>
+</AccordionGroup>
+
+## Finding Code Ownership
+
+Use the `CODEOWNERS` file to find team ownership:
+
+```bash
+# Find owner of a package
+./pkg/cmd/whoownsit pkg/sql/opt
+
+# View CODEOWNERS
+cat .github/CODEOWNERS
+```
+
+The CODEOWNERS file maps code paths to GitHub teams responsible for review and maintenance.
+
+<Note>
+  Team names in CODEOWNERS like `@cockroachdb/sql-queries-prs` indicate the team responsible for that code area.
+</Note>
+
+## Key Architectural Patterns
+
+### Layered Architecture
+
+CockroachDB follows a layered architecture:
+
+<Steps>
+  <Step title="SQL Layer">
+    Handles SQL parsing, planning, and distributed execution. Translates SQL to KV operations.
+  </Step>
+
+  <Step title="Transaction Layer">
+    Provides ACID transactions with serializable isolation. Coordinates distributed transactions.
+  </Step>
+
+  <Step title="Distribution Layer">
+    Manages data distribution, replication, and rebalancing across nodes.
+  </Step>
+
+  <Step title="Replication Layer">
+    Uses Raft consensus for consistent replication. Handles leader election and log replication.
+  </Step>
+
+  <Step title="Storage Layer">
+    Provides persistent storage via Pebble (LSM-based storage engine).
+  </Step>
+</Steps>
+
+### Protocol Buffers for Serialization
+
+CockroachDB uses Protocol Buffers extensively:
+
+- **RPC Messages**: All RPC uses protobuf
+- **Stored Data**: Many structures serialized as protobuf
+- **Versioning**: Protobuf enables rolling upgrades
+
+Proto files are in packages alongside Go code (e.g., `pkg/kv/kvpb/*.proto`).
+
+### Version Gates
+
+CockroachDB supports rolling upgrades using version gates:
+
+```go
+import "github.com/cockroachdb/cockroach/pkg/clusterversion"
+
+if v >= clusterversion.V23_2_MyNewFeature {
+    // Use new feature
+} else {
+    // Use old behavior
+}
+```
+
+See `pkg/clusterversion/` for version management.
+
+## Navigation Tips
+
+<CardGroup cols={2}>
+  <Card title="Use CODEOWNERS" icon="users">
+    The `.github/CODEOWNERS` file is an excellent starting point for understanding the architecture and finding relevant code.
+  </Card>
+  
+  <Card title="Follow Imports" icon="arrows-split-up-and-left">
+    Imports show dependencies. Starting from `pkg/cmd/cockroach/main.go` shows how components connect.
+  </Card>
+  
+  <Card title="Read Design Docs" icon="file-lines">
+    Check `docs/RFCS/` and `docs/tech-notes/` for architectural decisions and rationale.
+  </Card>
+  
+  <Card title="Ask in Slack" icon="slack">
+    The `#contributors` channel is great for questions about code structure and architecture.
+  </Card>
+</CardGroup>
+
+## Important Subsystems
+
+### Closed Timestamps
+
+Enables non-blocking reads of historical data:
+
+- `pkg/kv/kvserver/closedts/`: Closed timestamp tracking
+- Used for follower reads and CDC
+
+### Admission Control
+
+Prevents overload by controlling request admission:
+
+- `pkg/util/admission/`: Admission control framework
+- `pkg/kv/kvserver/kvadmission/`: KV-level admission
+- `pkg/kv/kvserver/kvflowcontrol/`: Flow control for replication
+
+### Multi-Tenancy
+
+Supports multiple isolated tenants in a cluster:
+
+- `pkg/multitenant/`: Multi-tenancy infrastructure
+- `pkg/server/`: Tenant server coordination
+- `pkg/ccl/multitenantccl/`: Enterprise multi-tenancy features
+
+### Security
+
+Authentication, authorization, and encryption:
+
+- `pkg/security/`: Core security primitives
+- `pkg/sql/pgwire/`: PostgreSQL wire protocol and auth
+- `pkg/ccl/securityccl/`: Enterprise security features
+
+## Resources
+
+<CardGroup cols={2}>
+  <Card title="Architecture Guide" icon="book-open" href="https://www.cockroachlabs.com/docs/stable/architecture/overview.html">
+    High-level architecture documentation
+  </Card>
+  
+  <Card title="Design Documents" icon="file-contract" href="https://github.com/cockroachdb/cockroach/blob/master/docs/design.md">
+    Original design document
+  </Card>
+  
+  <Card title="CODEOWNERS" icon="code">
+    `.github/CODEOWNERS` in the repository
+  </Card>
+  
+  <Card title="Tech Notes" icon="note-sticky">
+    `docs/tech-notes/` directory for detailed explanations
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Building from Source" icon="hammer" href="/dev/building-from-source">
+    Learn how to build CockroachDB
+  </Card>
+  
+  <Card title="Testing" icon="flask" href="/dev/testing">
+    Understand the test infrastructure
+  </Card>
+  
+  <Card title="Contributing" icon="code-pull-request" href="/dev/contributing">
+    Start contributing to CockroachDB
+  </Card>
+  
+  <Card title="Architecture Overview" icon="sitemap" href="https://www.cockroachlabs.com/docs/stable/architecture/overview.html">
+    Read the full architecture guide
+  </Card>
+</CardGroup>

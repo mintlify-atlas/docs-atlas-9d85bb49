@@ -1,0 +1,465 @@
+---
+title: Testing CockroachDB
+description: Learn how to run tests, understand test infrastructure, and write effective tests
+---
+
+CockroachDB has a comprehensive test suite covering unit tests, integration tests, logic tests, and end-to-end tests. The `./dev test` command provides a unified interface for running tests.
+
+## Running Tests
+
+### Basic Test Commands
+
+Use the `./dev test` command to run tests:
+
+<CodeGroup>
+```bash Package Tests
+# Run all tests in a package
+./dev test pkg/sql
+```
+
+```bash Specific Test
+# Run tests matching a pattern
+./dev test pkg/sql -f=TestParse -v
+```
+
+```bash Multiple Runs
+# Run tests multiple times (useful for flaky test detection)
+./dev test pkg/sql --count=5
+```
+
+```bash With Timeout
+# Run with custom timeout
+./dev test pkg/kv/kvserver --timeout=10m
+```
+</CodeGroup>
+
+<Warning>
+  When filtering tests with `-f`, **always include the `-v` flag**. This warns you if your filter didn't match anything. Look for `testing: warning: no tests to run` in the output.
+</Warning>
+
+### Common Test Scenarios
+
+<AccordionGroup>
+  <Accordion title="Running Fast Unit Tests">
+    ```bash
+    # Run tests in a specific package (faster than full package)
+    ./dev test pkg/util/log -f=TestFormat -v
+    
+    # Run tests in multiple packages
+    ./dev test pkg/util/log pkg/util/timeutil
+    ```
+  </Accordion>
+
+  <Accordion title="Running Slow Integration Tests">
+    Some packages have slow tests (SQL tests can take 10+ minutes):
+    
+    ```bash
+    # Be patient - SQL tests are comprehensive
+    ./dev test pkg/sql
+    
+    # Use filters to run subset
+    ./dev test pkg/sql -f=TestLogic/local/select -v
+    ```
+    
+    <Note>
+      The KV and SQL packages have particularly comprehensive test suites. Use filters to run specific tests during development.
+    </Note>
+  </Accordion>
+
+  <Accordion title="Running Logic Tests">
+    Logic tests are SQL correctness tests:
+    
+    ```bash
+    # Run all logic tests
+    ./dev test pkg/sql/logictest
+    
+    # Run specific logic test file
+    ./dev test pkg/sql/logictest -f=TestLogic/local/select
+    ```
+  </Accordion>
+
+  <Accordion title="Stress Testing">
+    Detect race conditions and flaky tests:
+    
+    ```bash
+    # Run test 100 times looking for failures
+    ./dev test pkg/kv --count=100 -f=TestRangefeed
+    
+    # Use stress tool for more control
+    stress ./dev test pkg/kv -f=TestRangefeed --count=1
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Test Options
+
+View all available options:
+
+```bash
+./dev test --help
+```
+
+<CardGroup cols={2}>
+  <Card title="Verbose Output" icon="terminal">
+    ```bash
+    ./dev test pkg/sql -v
+    ```
+    Shows detailed test output including test names and logs.
+  </Card>
+  
+  <Card title="Short Mode" icon="forward-fast">
+    ```bash
+    ./dev test pkg/sql --short
+    ```
+    Skips slow tests (those marked with `testing.Short()`).
+  </Card>
+  
+  <Card title="Race Detector" icon="flag-checkered">
+    ```bash
+    ./dev test pkg/kv --race
+    ```
+    Enables Go's race detector (much slower but catches concurrency bugs).
+  </Card>
+  
+  <Card title="Test Coverage" icon="chart-line">
+    ```bash
+    ./dev test pkg/util/log --cover
+    ```
+    Generates test coverage reports.
+  </Card>
+</CardGroup>
+
+## Test Infrastructure
+
+### Test Types
+
+CockroachDB uses several types of tests:
+
+<Steps>
+  <Step title="Unit Tests">
+    Standard Go tests in `*_test.go` files:
+    
+    ```go
+    func TestFeature(t *testing.T) {
+        // Test implementation
+    }
+    ```
+    
+    Located alongside the code they test.
+  </Step>
+
+  <Step title="Logic Tests">
+    SQL correctness tests in `pkg/sql/logictest/testdata/`:
+    
+    - Test SQL semantics and correctness
+    - Compare output against expected results
+    - Run in various configurations (local, distributed, multi-region)
+  </Step>
+
+  <Step title="Data-Driven Tests">
+    Tests using the `datadriven` framework:
+    
+    - Test data in `testdata/` directories
+    - Allows easy addition of test cases
+    - Common in SQL optimizer and KV tests
+  </Step>
+
+  <Step title="Roachtests">
+    Large-scale integration tests in `pkg/cmd/roachtest/`:
+    
+    - Run on real clusters
+    - Test distributed scenarios
+    - Performance and correctness at scale
+    - Typically run in CI, not locally
+  </Step>
+</Steps>
+
+### Test Utilities
+
+CockroachDB provides testing utilities in `pkg/testutils/`:
+
+```go
+import (
+    "github.com/cockroachdb/cockroach/pkg/testutils"
+    "github.com/cockroachdb/cockroach/pkg/testutils/sqlutils"
+    "github.com/cockroachdb/cockroach/pkg/testutils/serverutils"
+)
+```
+
+<CardGroup cols={2}>
+  <Card title="Test Server" icon="server">
+    Create lightweight test clusters:
+    ```go
+    s, sqlDB, _ := serverutils.StartServer(t, base.TestServerArgs{})
+    defer s.Stopper().Stop(ctx)
+    ```
+  </Card>
+  
+  <Card title="SQL Utilities" icon="database">
+    Execute SQL in tests:
+    ```go
+    sqlutils.MakeSQLRunner(sqlDB).Exec(t, "CREATE TABLE t (id INT)")
+    ```
+  </Card>
+  
+  <Card title="Assertions" icon="check-double">
+    Common test assertions:
+    ```go
+    testutils.SucceedsSoon(t, func() error {
+        // Check condition
+    })
+    ```
+  </Card>
+  
+  <Card title="Cleanup" icon="broom">
+    Automatic cleanup:
+    ```go
+    tempDir := testutils.TempDir(t)
+    // Automatically cleaned up
+    ```
+  </Card>
+</CardGroup>
+
+## Code Generation
+
+Many CockroachDB components rely on generated code:
+
+### What Gets Generated?
+
+<CardGroup cols={2}>
+  <Card title="Protocol Buffers" icon="arrows-left-right">
+    `.proto` files → `.pb.go` files
+    
+    Used for serialization and RPC.
+  </Card>
+  
+  <Card title="SQL Parser" icon="brackets-curly">
+    Grammar files → Parser code
+    
+    Generates the SQL parser.
+  </Card>
+  
+  <Card title="SQL Optimizer" icon="wand-magic-sparkles">
+    Optgen rules → Optimizer code
+    
+    Generates optimizer transformations.
+  </Card>
+  
+  <Card title="Stringer" icon="text">
+    Type definitions → String methods
+    
+    Generates `String()` methods for enums.
+  </Card>
+</CardGroup>
+
+### Generating Code
+
+Use `./dev generate` to regenerate code:
+
+```bash
+# Generate all code (SLOW - can take 10+ minutes)
+./dev generate
+
+# Generate only Go code
+./dev generate go
+
+# Generate only protocol buffers (relatively fast)
+./dev generate protobuf
+
+# Update BUILD.bazel files when dependencies change
+./dev generate bazel
+```
+
+<Warning>
+  Code generation is **slow**. Only regenerate what you actually need.
+  
+  `./dev test` and `./dev build` automatically generate dependencies but don't lift them into the worktree. If you need to see generated code, run `./dev generate` explicitly.
+</Warning>
+
+### When to Regenerate
+
+Regenerate code when you modify:
+
+- `.proto` files (protobuf definitions)
+- `sql.y` or `sql.bnf` (SQL grammar)
+- `*.opt` files (optimizer rules)
+- Go dependencies (run `./dev generate bazel`)
+- Stringer annotations
+
+## Writing Effective Tests
+
+### Best Practices
+
+<Steps>
+  <Step title="Test at the Right Level">
+    - Use unit tests for logic and edge cases
+    - Use integration tests for component interaction
+    - Use logic tests for SQL correctness
+    - Use roachtests for distributed scenarios
+  </Step>
+
+  <Step title="Make Tests Deterministic">
+    Avoid flaky tests:
+    
+    ```go
+    // Bad: timing-dependent
+    time.Sleep(100 * time.Millisecond)
+    
+    // Good: condition-based
+    testutils.SucceedsSoon(t, func() error {
+        if !conditionMet() {
+            return errors.New("condition not met")
+        }
+        return nil
+    })
+    ```
+  </Step>
+
+  <Step title="Use Testdata Files">
+    For complex test cases, use data-driven tests:
+    
+    ```
+    testdata/
+      my_feature
+      another_case
+    ```
+    
+    Easier to add cases and review changes.
+  </Step>
+
+  <Step title="Clean Up Resources">
+    Always clean up:
+    
+    ```go
+    s := serverutils.StartServer(t, base.TestServerArgs{})
+    defer s.Stopper().Stop(ctx)
+    ```
+  </Step>
+
+  <Step title="Test Error Cases">
+    Don't just test the happy path:
+    
+    ```go
+    // Test error conditions
+    _, err := fn(invalidInput)
+    require.Error(t, err)
+    require.Contains(t, err.Error(), "expected error message")
+    ```
+  </Step>
+</Steps>
+
+### SQL Logic Tests
+
+When adding SQL features, add logic tests:
+
+```sql
+# testdata/logic_test/my_feature
+
+statement ok
+CREATE TABLE t (id INT PRIMARY KEY, name STRING)
+
+query IT rowsort
+SELECT * FROM t
+----
+
+statement ok
+INSERT INTO t VALUES (1, 'alice'), (2, 'bob')
+
+query IT rowsort
+SELECT * FROM t
+----
+1  alice
+2  bob
+```
+
+## Continuous Integration
+
+### CI Test Runs
+
+When you open a PR, several CI checks run:
+
+- **Unit Tests**: All package tests
+- **Logic Tests**: SQL correctness tests
+- **Roachtests**: Distributed integration tests (subset)
+- **Linters**: Code style and quality checks
+- **Build Tests**: Ensure code builds on all platforms
+
+### Handling CI Failures
+
+<AccordionGroup>
+  <Accordion title="Test Failures">
+    If tests fail in CI:
+    
+    1. Reproduce locally: `./dev test pkg/failing/test -f=TestName -v`
+    2. Fix the issue
+    3. Verify fix: `./dev test pkg/failing/test --count=10`
+    4. Push the fix
+  </Accordion>
+
+  <Accordion title="Flaky Tests">
+    If a test fails intermittently:
+    
+    1. Report it by opening an issue
+    2. Tag with `A-flaky-test`
+    3. Include CI logs and failure details
+    4. Consider adding stress testing
+  </Accordion>
+
+  <Accordion title="Lint Failures">
+    Fix formatting and style issues:
+    
+    ```bash
+    # Format your code
+    crlfmt -w -tab 2 your_file.go
+    
+    # Regenerate if needed
+    ./dev generate bazel
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Debugging Tests
+
+### Common Debugging Techniques
+
+<CodeGroup>
+```bash Verbose Output
+# See detailed test output
+./dev test pkg/kv -f=TestRangefeed -v
+```
+
+```bash Debug Logging
+# Enable debug logging
+COCKROACH_LOG_LEVEL=debug ./dev test pkg/kv -f=TestRangefeed -v
+```
+
+```bash Single Test
+# Run just one test
+./dev test pkg/sql -f='^TestSelectClause$' -v
+```
+
+```bash With Debugger
+# Use delve debugger
+dlv test ./pkg/kv -- -test.run=TestRangefeed
+```
+</CodeGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Building from Source" icon="hammer" href="/dev/building-from-source">
+    Learn how to build CockroachDB
+  </Card>
+  
+  <Card title="Code Structure" icon="folder-tree" href="/dev/code-structure">
+    Understand the codebase organization
+  </Card>
+  
+  <Card title="Contributing Guide" icon="code-pull-request" href="/dev/contributing">
+    Read the full contribution guidelines
+  </Card>
+  
+  <Card title="Test Engineering" icon="vial" href="https://wiki.crdb.io/">
+    Advanced testing documentation on wiki
+  </Card>
+</CardGroup>

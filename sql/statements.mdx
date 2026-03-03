@@ -1,0 +1,624 @@
+---
+title: SQL Statements
+description: Complete reference for SQL statements supported by CockroachDB
+---
+
+CockroachDB supports standard SQL statements for data definition, manipulation, and control. This page provides a comprehensive reference organized by statement category.
+
+## Statement Categories
+
+SQL statements are classified into four main categories:
+
+- **DDL** (Data Definition Language) - Schema and structure management
+- **DML** (Data Manipulation Language) - Data operations
+- **DCL** (Data Control Language) - Permissions and access control
+- **TCL** (Transaction Control Language) - Transaction management
+
+## Data Definition Language (DDL)
+
+DDL statements create, modify, and drop database objects.
+
+### Database Operations
+
+<Tabs>
+  <Tab title="CREATE DATABASE">
+    ```sql
+    -- Basic database creation
+    CREATE DATABASE my_app;
+    
+    -- With encoding and collation
+    CREATE DATABASE international 
+      ENCODING = 'UTF8' 
+      LC_COLLATE = 'en_US.UTF-8';
+    
+    -- Conditional creation
+    CREATE DATABASE IF NOT EXISTS my_app;
+    ```
+  </Tab>
+  
+  <Tab title="ALTER DATABASE">
+    ```sql
+    -- Rename database
+    ALTER DATABASE my_app RENAME TO my_application;
+    
+    -- Change owner
+    ALTER DATABASE my_application OWNER TO admin_user;
+    
+    -- Set survival goal (multi-region)
+    ALTER DATABASE my_app SURVIVE ZONE FAILURE;
+    ```
+  </Tab>
+  
+  <Tab title="DROP DATABASE">
+    ```sql
+    -- Drop database
+    DROP DATABASE my_app;
+    
+    -- Drop with cascade
+    DROP DATABASE my_app CASCADE;
+    
+    -- Conditional drop
+    DROP DATABASE IF EXISTS my_app CASCADE;
+    ```
+  </Tab>
+</Tabs>
+
+### Schema Operations
+
+<CodeGroup>
+```sql CREATE SCHEMA
+CREATE SCHEMA analytics;
+
+CREATE SCHEMA IF NOT EXISTS reporting;
+
+CREATE SCHEMA private AUTHORIZATION data_owner;
+```
+
+```sql ALTER SCHEMA
+ALTER SCHEMA analytics RENAME TO metrics;
+
+ALTER SCHEMA metrics OWNER TO admin_user;
+```
+
+```sql DROP SCHEMA
+DROP SCHEMA analytics;
+
+DROP SCHEMA IF EXISTS reporting CASCADE;
+```
+</CodeGroup>
+
+### Table Operations
+
+<Tabs>
+  <Tab title="CREATE TABLE">
+    ```sql
+    -- Basic table with primary key
+    CREATE TABLE users (
+      id INT PRIMARY KEY,
+      username VARCHAR(50) NOT NULL UNIQUE,
+      email VARCHAR(255) NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    
+    -- Table with composite primary key
+    CREATE TABLE order_items (
+      order_id INT,
+      item_id INT,
+      quantity INT NOT NULL,
+      price DECIMAL(10, 2) NOT NULL,
+      PRIMARY KEY (order_id, item_id)
+    );
+    
+    -- Table with hash-sharded primary key
+    CREATE TABLE events (
+      event_id UUID,
+      event_type TEXT,
+      occurred_at TIMESTAMP,
+      PRIMARY KEY (event_id) USING HASH WITH (bucket_count = 8)
+    );
+    
+    -- Temporary table
+    CREATE TEMP TABLE session_data (
+      session_id UUID PRIMARY KEY,
+      data JSONB
+    );
+    ```
+  </Tab>
+  
+  <Tab title="ALTER TABLE">
+    ```sql
+    -- Add column
+    ALTER TABLE users ADD COLUMN phone VARCHAR(20);
+    
+    -- Drop column
+    ALTER TABLE users DROP COLUMN phone;
+    
+    -- Rename column
+    ALTER TABLE users RENAME COLUMN username TO user_name;
+    
+    -- Change column type
+    ALTER TABLE users ALTER COLUMN email TYPE TEXT;
+    
+    -- Add constraint
+    ALTER TABLE users ADD CONSTRAINT email_check 
+      CHECK (email LIKE '%@%');
+    
+    -- Drop constraint
+    ALTER TABLE users DROP CONSTRAINT email_check;
+    
+    -- Set default
+    ALTER TABLE users ALTER COLUMN created_at 
+      SET DEFAULT CURRENT_TIMESTAMP;
+    
+    -- Rename table
+    ALTER TABLE users RENAME TO app_users;
+    ```
+  </Tab>
+  
+  <Tab title="DROP TABLE">
+    ```sql
+    DROP TABLE users;
+    
+    DROP TABLE IF EXISTS temp_data;
+    
+    -- Drop multiple tables
+    DROP TABLE users, sessions, logs CASCADE;
+    ```
+  </Tab>
+</Tabs>
+
+### Index Operations
+
+<CodeGroup>
+```sql CREATE INDEX
+-- Standard index
+CREATE INDEX ON users (email);
+
+-- Named index
+CREATE INDEX users_email_idx ON users (email);
+
+-- Composite index
+CREATE INDEX users_name_email_idx ON users (last_name, first_name, email);
+
+-- Unique index
+CREATE UNIQUE INDEX ON users (username);
+
+-- Partial index
+CREATE INDEX active_users_idx ON users (email) 
+  WHERE status = 'active';
+
+-- Inverted index (for JSONB)
+CREATE INVERTED INDEX ON logs (metadata);
+
+-- Concurrent index creation
+CREATE INDEX CONCURRENTLY ON large_table (column_name);
+```
+
+```sql ALTER INDEX
+-- Rename index
+ALTER INDEX users_email_idx RENAME TO idx_users_email;
+
+-- Change visibility
+ALTER INDEX idx_users_email INVISIBLE;
+ALTER INDEX idx_users_email VISIBLE;
+
+-- Configure index
+ALTER INDEX idx_users_email CONFIGURE ZONE USING 
+  num_replicas = 5, gc.ttlseconds = 90000;
+```
+
+```sql DROP INDEX
+DROP INDEX users_email_idx;
+
+DROP INDEX IF EXISTS temp_idx CASCADE;
+
+DROP INDEX CONCURRENTLY users@users_email_idx;
+```
+</CodeGroup>
+
+### Sequence Operations
+
+```sql
+-- Create sequence
+CREATE SEQUENCE customer_id_seq START WITH 1000 INCREMENT BY 1;
+
+-- Use in table
+CREATE TABLE customers (
+  id INT PRIMARY KEY DEFAULT nextval('customer_id_seq'),
+  name TEXT NOT NULL
+);
+
+-- Alter sequence
+ALTER SEQUENCE customer_id_seq RESTART WITH 2000;
+ALTER SEQUENCE customer_id_seq INCREMENT BY 10;
+
+-- Drop sequence
+DROP SEQUENCE customer_id_seq;
+```
+
+### View Operations
+
+<CodeGroup>
+```sql CREATE VIEW
+CREATE VIEW active_users AS
+  SELECT id, username, email 
+  FROM users 
+  WHERE status = 'active';
+
+CREATE OR REPLACE VIEW user_summary AS
+  SELECT 
+    u.id,
+    u.username,
+    COUNT(o.id) AS order_count
+  FROM users u
+  LEFT JOIN orders o ON u.id = o.user_id
+  GROUP BY u.id, u.username;
+```
+
+```sql DROP VIEW
+DROP VIEW active_users;
+
+DROP VIEW IF EXISTS temp_view CASCADE;
+```
+</CodeGroup>
+
+## Data Manipulation Language (DML)
+
+DML statements query and modify data.
+
+### SELECT Statement
+
+<Tabs>
+  <Tab title="Basic SELECT">
+    ```sql
+    -- Select all columns
+    SELECT * FROM users;
+    
+    -- Select specific columns
+    SELECT id, username, email FROM users;
+    
+    -- With aliases
+    SELECT 
+      id AS user_id,
+      username AS user_name,
+      email AS contact_email
+    FROM users;
+    ```
+  </Tab>
+  
+  <Tab title="WHERE Clause">
+    ```sql
+    -- Basic filtering
+    SELECT * FROM users WHERE status = 'active';
+    
+    -- Multiple conditions
+    SELECT * FROM users 
+    WHERE status = 'active' AND created_at > '2025-01-01';
+    
+    -- IN clause
+    SELECT * FROM users 
+    WHERE id IN (1, 2, 3, 5, 8);
+    
+    -- Pattern matching
+    SELECT * FROM users 
+    WHERE email LIKE '%@example.com';
+    
+    -- Range query
+    SELECT * FROM orders 
+    WHERE total BETWEEN 100 AND 1000;
+    ```
+  </Tab>
+  
+  <Tab title="Joins">
+    ```sql
+    -- INNER JOIN
+    SELECT u.username, o.order_id, o.total
+    FROM users u
+    INNER JOIN orders o ON u.id = o.user_id;
+    
+    -- LEFT JOIN
+    SELECT u.username, COUNT(o.id) AS order_count
+    FROM users u
+    LEFT JOIN orders o ON u.id = o.user_id
+    GROUP BY u.id, u.username;
+    
+    -- Multiple joins
+    SELECT 
+      u.username,
+      o.order_id,
+      oi.item_id,
+      oi.quantity
+    FROM users u
+    INNER JOIN orders o ON u.id = o.user_id
+    INNER JOIN order_items oi ON o.id = oi.order_id;
+    ```
+  </Tab>
+  
+  <Tab title="Aggregation">
+    ```sql
+    -- Basic aggregation
+    SELECT 
+      COUNT(*) AS total_users,
+      COUNT(DISTINCT email) AS unique_emails
+    FROM users;
+    
+    -- GROUP BY
+    SELECT 
+      status,
+      COUNT(*) AS user_count,
+      AVG(age) AS avg_age
+    FROM users
+    GROUP BY status;
+    
+    -- HAVING clause
+    SELECT 
+      user_id,
+      COUNT(*) AS order_count,
+      SUM(total) AS total_spent
+    FROM orders
+    GROUP BY user_id
+    HAVING COUNT(*) > 5;
+    ```
+  </Tab>
+  
+  <Tab title="Ordering & Limiting">
+    ```sql
+    -- ORDER BY
+    SELECT * FROM users ORDER BY created_at DESC;
+    
+    -- Multiple sort columns
+    SELECT * FROM users 
+    ORDER BY last_name ASC, first_name ASC;
+    
+    -- LIMIT and OFFSET
+    SELECT * FROM users 
+    ORDER BY id 
+    LIMIT 10 OFFSET 20;
+    
+    -- Pagination pattern
+    SELECT * FROM users 
+    WHERE id > 100 
+    ORDER BY id 
+    LIMIT 50;
+    ```
+  </Tab>
+</Tabs>
+
+### INSERT Statement
+
+<CodeGroup>
+```sql Single Row Insert
+INSERT INTO users (username, email) 
+VALUES ('alice', 'alice@example.com');
+
+-- With all columns specified
+INSERT INTO users (id, username, email, created_at)
+VALUES (1, 'alice', 'alice@example.com', CURRENT_TIMESTAMP);
+```
+
+```sql Multi-Row Insert
+INSERT INTO users (username, email) VALUES
+  ('alice', 'alice@example.com'),
+  ('bob', 'bob@example.com'),
+  ('charlie', 'charlie@example.com');
+```
+
+```sql Insert from SELECT
+INSERT INTO archived_orders
+SELECT * FROM orders
+WHERE created_at < '2025-01-01';
+```
+
+```sql UPSERT (Insert or Update)
+INSERT INTO user_stats (user_id, login_count)
+VALUES (1, 1)
+ON CONFLICT (user_id) DO UPDATE 
+  SET login_count = user_stats.login_count + 1;
+```
+
+```sql RETURNING Clause
+INSERT INTO users (username, email)
+VALUES ('alice', 'alice@example.com')
+RETURNING id, created_at;
+```
+</CodeGroup>
+
+### UPDATE Statement
+
+```sql
+-- Basic update
+UPDATE users SET status = 'inactive' WHERE id = 1;
+
+-- Update multiple columns
+UPDATE users 
+SET 
+  status = 'active',
+  last_login = CURRENT_TIMESTAMP
+WHERE id = 1;
+
+-- Update with subquery
+UPDATE orders
+SET status = 'shipped'
+WHERE id IN (
+  SELECT order_id FROM shipments 
+  WHERE shipped_at IS NOT NULL
+);
+
+-- Update with join pattern
+UPDATE orders o
+SET total = (
+  SELECT SUM(price * quantity)
+  FROM order_items oi
+  WHERE oi.order_id = o.id
+);
+
+-- RETURNING clause
+UPDATE users 
+SET status = 'active' 
+WHERE id = 1
+RETURNING id, status, updated_at;
+```
+
+### DELETE Statement
+
+```sql
+-- Basic delete
+DELETE FROM users WHERE id = 1;
+
+-- Delete with condition
+DELETE FROM sessions 
+WHERE expires_at < CURRENT_TIMESTAMP;
+
+-- Delete with subquery
+DELETE FROM order_items
+WHERE order_id IN (
+  SELECT id FROM orders WHERE status = 'cancelled'
+);
+
+-- RETURNING clause
+DELETE FROM users 
+WHERE status = 'deleted'
+RETURNING id, username;
+```
+
+### TRUNCATE Statement
+
+```sql
+-- Fast delete all rows
+TRUNCATE users;
+
+-- Truncate multiple tables
+TRUNCATE users, sessions, logs CASCADE;
+```
+
+<Warning>
+`TRUNCATE` is faster than `DELETE` but cannot be rolled back in some scenarios and resets sequences.
+</Warning>
+
+## Data Control Language (DCL)
+
+DCL statements manage permissions and access control.
+
+### User and Role Management
+
+<CodeGroup>
+```sql CREATE ROLE/USER
+CREATE ROLE analyst;
+
+CREATE USER alice WITH PASSWORD 'secure_password';
+
+CREATE ROLE admin WITH LOGIN PASSWORD 'admin_pass';
+```
+
+```sql GRANT
+-- Grant table privileges
+GRANT SELECT, INSERT ON users TO analyst;
+
+-- Grant all privileges
+GRANT ALL ON DATABASE my_app TO admin;
+
+-- Grant role membership
+GRANT analyst TO alice;
+```
+
+```sql REVOKE
+-- Revoke privileges
+REVOKE INSERT ON users FROM analyst;
+
+-- Revoke all
+REVOKE ALL ON DATABASE my_app FROM old_admin;
+```
+
+```sql ALTER ROLE
+ALTER ROLE alice WITH PASSWORD 'new_password';
+
+ALTER ROLE admin WITH CREATEROLE;
+```
+
+```sql DROP ROLE/USER
+DROP USER alice;
+
+DROP ROLE IF EXISTS temp_role;
+```
+</CodeGroup>
+
+## Transaction Control Language (TCL)
+
+See the [Transactions](/sql/transactions) page for detailed transaction control documentation.
+
+## Utility Statements
+
+### SHOW Statements
+
+<CodeGroup>
+```sql Show Databases
+SHOW DATABASES;
+
+SHOW SCHEMAS FROM my_app;
+```
+
+```sql Show Tables
+SHOW TABLES;
+
+SHOW TABLES FROM my_app.public;
+```
+
+```sql Show Columns
+SHOW COLUMNS FROM users;
+
+DESCRIBE users;  -- Alias for SHOW COLUMNS
+```
+
+```sql Show Indexes
+SHOW INDEXES FROM users;
+
+SHOW INDEXES FROM my_app.public.users;
+```
+
+```sql Show Constraints
+SHOW CONSTRAINTS FROM users;
+```
+
+```sql Show Create
+SHOW CREATE TABLE users;
+
+SHOW CREATE DATABASE my_app;
+```
+</CodeGroup>
+
+### SET Statements
+
+```sql
+-- Session variable
+SET statement_timeout = '60s';
+
+-- Search path
+SET search_path = my_app, public;
+
+-- Time zone
+SET TIME ZONE 'America/New_York';
+
+-- Application name
+SET application_name = 'my_application';
+```
+
+### EXPLAIN Statement
+
+```sql
+-- Show query plan
+EXPLAIN SELECT * FROM users WHERE email = 'alice@example.com';
+
+-- Verbose output
+EXPLAIN (VERBOSE) SELECT * FROM orders o 
+  JOIN users u ON o.user_id = u.id;
+
+-- Analyze actual execution
+EXPLAIN ANALYZE SELECT COUNT(*) FROM large_table;
+```
+
+## See Also
+
+- [Data Types](/sql/data-types) - SQL data type reference
+- [Functions](/sql/functions) - Built-in SQL functions
+- [Constraints](/sql/constraints) - Table constraints
+- [Transactions](/sql/transactions) - Transaction control

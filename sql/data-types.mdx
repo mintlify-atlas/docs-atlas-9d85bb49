@@ -1,0 +1,464 @@
+---
+title: SQL Data Types
+description: Comprehensive reference for SQL data types supported by CockroachDB
+---
+
+CockroachDB supports a rich set of SQL data types for defining column schemas and expressing values. This page documents all supported data types, their storage characteristics, and usage examples.
+
+## Overview
+
+The type system differentiates between scalar types, arrays, and tuples. Each type consists of:
+
+- **Family** - equivalence group of the type
+- **Oid** - Postgres Object ID describing the type
+- **Precision** - maximum accuracy (for numeric types)
+- **Width** - maximum size or scale
+- **Locale** - location for sorting and formatting (for collated strings)
+
+## Numeric Types
+
+### Integer Types
+
+CockroachDB supports various integer widths for different storage and range requirements.
+
+<Tabs>
+  <Tab title="INT/BIGINT">
+    ```sql
+    CREATE TABLE users (
+      id INT PRIMARY KEY,
+      user_count BIGINT DEFAULT 0
+    );
+    
+    INSERT INTO users VALUES (1, 9223372036854775807);
+    ```
+    
+    - **Width**: 64 bits
+    - **Range**: -9,223,372,036,854,775,808 to 9,223,372,036,854,775,807
+    - **Aliases**: `INT8`, `INT64`, `INTEGER`
+  </Tab>
+  
+  <Tab title="INT4">
+    ```sql
+    CREATE TABLE metrics (
+      metric_id INT4 PRIMARY KEY,
+      value INT4
+    );
+    ```
+    
+    - **Width**: 32 bits
+    - **Range**: -2,147,483,648 to 2,147,483,647
+  </Tab>
+  
+  <Tab title="INT2/SMALLINT">
+    ```sql
+    CREATE TABLE categories (
+      category_id INT2 PRIMARY KEY,
+      sort_order SMALLINT
+    );
+    ```
+    
+    - **Width**: 16 bits
+    - **Range**: -32,768 to 32,767
+  </Tab>
+</Tabs>
+
+### Decimal Types
+
+For precise decimal arithmetic, use `DECIMAL` or `NUMERIC` types.
+
+<CodeGroup>
+```sql Basic DECIMAL
+CREATE TABLE products (
+  id INT PRIMARY KEY,
+  price DECIMAL(10, 2)  -- 10 total digits, 2 after decimal
+);
+
+INSERT INTO products VALUES (1, 19.99);
+```
+
+```sql Unlimited Precision
+CREATE TABLE financial_data (
+  id INT PRIMARY KEY,
+  amount DECIMAL  -- No precision limit
+);
+```
+
+```sql With Precision Only
+CREATE TABLE measurements (
+  value DECIMAL(8)  -- 8 digits total, no scale
+);
+```
+</CodeGroup>
+
+<ParamField path="DECIMAL(N,M)" type="numeric">
+  - **N** (precision): Total number of digits (0 = unlimited)
+  - **M** (width/scale): Digits after decimal point (0 = integer)
+</ParamField>
+
+### Floating Point Types
+
+<Warning>
+Floating-point types use approximate representations. Use `DECIMAL` for exact precision requirements like currency.
+</Warning>
+
+```sql
+CREATE TABLE sensors (
+  id INT PRIMARY KEY,
+  temperature FLOAT8,    -- 64-bit IEEE 754 (default)
+  humidity FLOAT4        -- 32-bit IEEE 754
+);
+
+INSERT INTO sensors VALUES (1, 23.456789, 65.2);
+```
+
+## String Types
+
+### VARCHAR and TEXT
+
+<Tabs>
+  <Tab title="VARCHAR(N)">
+    ```sql
+    CREATE TABLE accounts (
+      username VARCHAR(50) PRIMARY KEY,
+      email VARCHAR(255) NOT NULL
+    );
+    ```
+    
+    Variable-length string with maximum width `N`.
+  </Tab>
+  
+  <Tab title="TEXT/STRING">
+    ```sql
+    CREATE TABLE articles (
+      id INT PRIMARY KEY,
+      title TEXT,
+      content STRING  -- Unlimited length
+    );
+    ```
+    
+    Unlimited length text. `STRING` is a CockroachDB alias for `TEXT`.
+  </Tab>
+  
+  <Tab title="CHAR(N)">
+    ```sql
+    CREATE TABLE codes (
+      country_code CHAR(2),  -- Fixed 2 characters
+      state_code CHAR(2)
+    );
+    ```
+    
+    Fixed-length string, blank-padded to width `N`.
+  </Tab>
+</Tabs>
+
+### Collated Strings
+
+Control string sorting and comparison using collations.
+
+```sql
+CREATE TABLE localized_content (
+  id INT PRIMARY KEY,
+  title STRING COLLATE en,
+  description VARCHAR(200) COLLATE de
+);
+
+-- Case-insensitive comparison
+SELECT * FROM localized_content 
+WHERE title COLLATE en = 'Hello';
+```
+
+### Special String Types
+
+- **`NAME`** - PostgreSQL system identifier type (OID: `T_name`)
+- **`"char"`** - Single-byte internal type (OID: `T_char`)
+- **`BPCHAR`** - Blank-padded char (OID: `T_bpchar`)
+
+## Date and Time Types
+
+<CodeGroup>
+```sql DATE
+CREATE TABLE events (
+  event_date DATE DEFAULT CURRENT_DATE
+);
+
+INSERT INTO events VALUES ('2026-03-03');
+```
+
+```sql TIMESTAMP
+CREATE TABLE logs (
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ
+);
+
+INSERT INTO logs VALUES 
+  ('2026-03-03 10:30:00', '2026-03-03 10:30:00-05:00');
+```
+
+```sql TIME
+CREATE TABLE schedules (
+  start_time TIME,
+  end_time TIMETZ  -- Time with time zone
+);
+
+INSERT INTO schedules VALUES 
+  ('09:00:00', '17:00:00-05:00');
+```
+
+```sql INTERVAL
+CREATE TABLE durations (
+  id INT PRIMARY KEY,
+  elapsed INTERVAL
+);
+
+INSERT INTO durations VALUES 
+  (1, INTERVAL '2 hours 30 minutes');
+```
+</CodeGroup>
+
+<Note>
+`TIMESTAMPTZ` stores timestamps with time zone awareness. CockroachDB internally stores all timestamps in UTC.
+</Note>
+
+## Binary Types
+
+```sql
+CREATE TABLE files (
+  id INT PRIMARY KEY,
+  file_data BYTES,
+  checksum BYTES
+);
+
+INSERT INTO files VALUES 
+  (1, '\x48656c6c6f', '\xdeadbeef');
+
+-- Decode bytes to string
+SELECT id, encode(file_data, 'escape') FROM files;
+```
+
+## Boolean Type
+
+```sql
+CREATE TABLE features (
+  id INT PRIMARY KEY,
+  enabled BOOL DEFAULT false,
+  is_public BOOLEAN NOT NULL
+);
+
+INSERT INTO features VALUES 
+  (1, true, false),
+  (2, 't', 'f'),      -- Alternative syntax
+  (3, 'yes', 'no');   -- Also supported
+```
+
+## UUID Type
+
+```sql
+CREATE TABLE sessions (
+  session_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id INT NOT NULL
+);
+
+INSERT INTO sessions (user_id) VALUES (1001);
+
+SELECT * FROM sessions 
+WHERE session_id = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
+```
+
+## Network Address Types
+
+### INET
+
+```sql
+CREATE TABLE connections (
+  id INT PRIMARY KEY,
+  client_ip INET,
+  server_ip INET
+);
+
+INSERT INTO connections VALUES 
+  (1, '192.168.1.1', '10.0.0.1'),
+  (2, '2001:db8::1', 'fe80::1');
+
+-- CIDR notation supported
+SELECT * FROM connections 
+WHERE client_ip << '192.168.1.0/24';
+```
+
+## JSON Types
+
+<Tabs>
+  <Tab title="JSONB">
+    ```sql
+    CREATE TABLE api_responses (
+      id INT PRIMARY KEY,
+      data JSONB
+    );
+    
+    INSERT INTO api_responses VALUES 
+      (1, '{"name": "Alice", "age": 30}');
+    
+    -- Query JSON fields
+    SELECT data->>'name' AS name FROM api_responses;
+    
+    -- Index JSON fields
+    CREATE INVERTED INDEX ON api_responses (data);
+    ```
+    
+    Binary JSON format (recommended). Supports inverted indexes.
+  </Tab>
+  
+  <Tab title="JSON">
+    ```sql
+    CREATE TABLE legacy_data (
+      id INT PRIMARY KEY,
+      payload JSON
+    );
+    
+    INSERT INTO legacy_data VALUES 
+      (1, '[1, 2, 3]');
+    ```
+    
+    Text JSON format. Internally stored as JSONB.
+  </Tab>
+</Tabs>
+
+## Bit String Types
+
+```sql
+CREATE TABLE permissions (
+  user_id INT PRIMARY KEY,
+  flags BIT(8),           -- Fixed 8 bits
+  options VARBIT(16)      -- Variable up to 16 bits
+);
+
+INSERT INTO permissions VALUES 
+  (1, B'11110000', B'101'),
+  (2, B'00001111', B'1010101');
+
+-- Bitwise operations
+SELECT user_id FROM permissions 
+WHERE flags & B'10000000' = B'10000000';
+```
+
+## Array Types
+
+Any scalar type can be made into an array.
+
+<CodeGroup>
+```sql Integer Arrays
+CREATE TABLE teams (
+  id INT PRIMARY KEY,
+  member_ids INT[],
+  scores INT8[]
+);
+
+INSERT INTO teams VALUES 
+  (1, ARRAY[1, 2, 3], ARRAY[100, 200, 300]);
+
+SELECT * FROM teams WHERE 2 = ANY(member_ids);
+```
+
+```sql String Arrays
+CREATE TABLE articles (
+  id INT PRIMARY KEY,
+  tags TEXT[],
+  authors VARCHAR[]
+);
+
+INSERT INTO articles VALUES 
+  (1, ARRAY['sql', 'database'], ARRAY['Alice', 'Bob']);
+```
+
+```sql Multidimensional Arrays
+CREATE TABLE matrices (
+  id INT PRIMARY KEY,
+  data INT[][]
+);
+
+INSERT INTO matrices VALUES 
+  (1, '{{1,2},{3,4}}');
+```
+</CodeGroup>
+
+## Enum Types
+
+User-defined enumerated types.
+
+```sql
+CREATE TYPE status AS ENUM ('pending', 'active', 'inactive');
+
+CREATE TABLE orders (
+  id INT PRIMARY KEY,
+  order_status status DEFAULT 'pending'
+);
+
+INSERT INTO orders VALUES 
+  (1, 'active'),
+  (2, 'pending');
+
+SELECT * FROM orders WHERE order_status = 'active';
+```
+
+## Special PostgreSQL Types
+
+### OID Type
+
+```sql
+CREATE TABLE system_objects (
+  object_oid OID PRIMARY KEY,
+  object_name TEXT
+);
+```
+
+### Vector Types
+
+```sql
+-- INT2VECTOR for system catalogs
+CREATE TABLE pg_indexes (
+  indkey INT2VECTOR
+);
+
+-- OIDVECTOR for system catalogs  
+CREATE TABLE pg_class (
+  relchecks OIDVECTOR
+);
+```
+
+## Type Conversion
+
+<CodeGroup>
+```sql CAST Function
+SELECT 
+  CAST('123' AS INT),
+  CAST(123.456 AS INT),
+  CAST('2026-03-03' AS DATE);
+```
+
+```sql :: Operator
+SELECT 
+  '123'::INT,
+  123.456::DECIMAL(10,2),
+  'true'::BOOL;
+```
+
+```sql Explicit Conversion
+SELECT 
+  to_date('2026-03-03', 'YYYY-MM-DD'),
+  to_timestamp('2026-03-03 10:30:00', 'YYYY-MM-DD HH24:MI:SS');
+```
+</CodeGroup>
+
+## Type Compatibility
+
+<Note>
+CockroachDB follows PostgreSQL's type compatibility rules:
+- Implicit casts between compatible types (e.g., INT2 → INT4 → INT8)
+- Explicit casts required for incompatible types
+- String to any type usually requires explicit casting
+</Note>
+
+## See Also
+
+- [CREATE TYPE](/sql/statements#create-type) - Define custom types
+- [ALTER TYPE](/sql/statements#alter-type) - Modify enum types
+- [Built-in Functions](/sql/functions) - Type conversion functions

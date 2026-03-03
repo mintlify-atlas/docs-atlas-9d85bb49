@@ -1,80 +1,304 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: "Quick Start Guide"
+description: "Get CockroachDB up and running in minutes with a local single-node cluster"
 ---
 
-## Get started in three steps
+## Overview
 
-Get your documentation site running locally and make your first customization.
-
-### Step 1: Set up your local environment
-
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
-
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
-
-<CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
-</CardGroup>
+This guide will walk you through starting a local CockroachDB cluster, connecting to it, and running your first SQL commands. You'll have a working database in less than 10 minutes.
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+This quickstart uses a single-node cluster for development and testing. For production deployments, see the [Installation Guide](/installation).
 </Note>
+
+## Prerequisites
+
+- A supported operating system (Linux, macOS, or Windows)
+- At least 2GB of available RAM
+- Terminal or command prompt access
+
+<Steps>
+  <Step title="Download CockroachDB">
+    Download the latest CockroachDB binary for your platform:
+
+    <CodeGroup>
+      ```bash macOS (Intel)
+      curl https://binaries.cockroachdb.com/cockroach-latest.darwin-10.9-amd64.tgz | tar -xz
+      sudo cp -i cockroach-latest.darwin-10.9-amd64/cockroach /usr/local/bin/
+      ```
+
+      ```bash macOS (ARM/M1)
+      curl https://binaries.cockroachdb.com/cockroach-latest.darwin-11.0-arm64.tgz | tar -xz
+      sudo cp -i cockroach-latest.darwin-11.0-arm64/cockroach /usr/local/bin/
+      ```
+
+      ```bash Linux
+      curl https://binaries.cockroachdb.com/cockroach-latest.linux-amd64.tgz | tar -xz
+      sudo cp -i cockroach-latest.linux-amd64/cockroach /usr/local/bin/
+      ```
+
+      ```bash Windows
+      # Download from https://binaries.cockroachdb.com/cockroach-latest.windows-6.2-amd64.zip
+      # Extract and add to PATH
+      ```
+    </CodeGroup>
+
+    Verify the installation:
+
+    ```bash
+    cockroach version
+    ```
+  </Step>
+
+  <Step title="Start a Single-Node Cluster">
+    Start CockroachDB in insecure mode (for development only):
+
+    ```bash
+    cockroach start-single-node --insecure --listen-addr=localhost:26257 --http-addr=localhost:8080
+    ```
+
+    You should see output indicating the node is running:
+
+    ```
+    CockroachDB node starting at 2024-03-03 12:00:00
+    build:               CCL v24.3.0
+    webui:               http://localhost:8080
+    sql:                 postgresql://root@localhost:26257/defaultdb?sslmode=disable
+    ```
+
+    <Tip>
+    Keep this terminal window open. The node will continue running until you stop it with `Ctrl+C`.
+    </Tip>
+
+    **What's happening:**
+    - `start-single-node`: Starts a single-node cluster (automatically initializes)
+    - `--insecure`: Runs without SSL/TLS (development only)
+    - `--listen-addr`: SQL and RPC connections address
+    - `--http-addr`: Admin UI address
+  </Step>
+
+  <Step title="Access the Admin UI">
+    Open your browser and navigate to:
+
+    ```
+    http://localhost:8080
+    ```
+
+    The Admin UI provides:
+    - Cluster health and metrics
+    - Database and table information
+    - Query performance statistics
+    - Node details and topology
+
+    <Note>
+    No authentication is required in insecure mode. For production, always use secure mode with proper certificates.
+    </Note>
+  </Step>
+
+  <Step title="Open the SQL Shell">
+    In a new terminal window, connect to the cluster using the built-in SQL client:
+
+    ```bash
+    cockroach sql --insecure --host=localhost:26257
+    ```
+
+    You'll see a welcome message:
+
+    ```
+    #
+    # Welcome to the CockroachDB SQL shell.
+    # All statements must be terminated by a semicolon.
+    # To exit, type: \q.
+    #
+    root@localhost:26257/defaultdb>
+    ```
+  </Step>
+
+  <Step title="Run Your First SQL Commands">
+    Let's create a database, table, and insert some data:
+
+    <CodeGroup>
+      ```sql Create Database
+      CREATE DATABASE bank;
+      USE bank;
+      ```
+
+      ```sql Create Table
+      CREATE TABLE accounts (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        balance DECIMAL(10, 2),
+        created_at TIMESTAMP DEFAULT now()
+      );
+      ```
+
+      ```sql Insert Data
+      INSERT INTO accounts (balance) VALUES
+        (1000.50),
+        (2500.00),
+        (750.25);
+      ```
+
+      ```sql Query Data
+      SELECT id, balance, created_at FROM accounts;
+      ```
+    </CodeGroup>
+
+    Expected output:
+
+    ```
+                       id                    | balance  |         created_at
+    -----------------------------------------+----------+-----------------------------
+      5a4e4a3b-7c2d-4f8e-9a1c-3d2e1f0b5c6a | 1000.50  | 2024-03-03 12:05:32.123456
+      7b5f5b4c-8d3e-5f9f-0b2d-4e3f2a1c6d7b | 2500.00  | 2024-03-03 12:05:32.123457
+      9c6a6c5d-9e4f-6a0a-1c3e-5f4a3b2d7e8c | 750.25   | 2024-03-03 12:05:32.123458
+    (3 rows)
+    ```
+  </Step>
+
+  <Step title="Try Advanced Features">
+    CockroachDB supports advanced SQL features:
+
+    <CodeGroup>
+      ```sql Transactions
+      BEGIN;
+      UPDATE accounts SET balance = balance - 100 WHERE balance > 1000;
+      UPDATE accounts SET balance = balance + 100 WHERE balance < 800;
+      COMMIT;
+      ```
+
+      ```sql Indexes
+      CREATE INDEX idx_balance ON accounts (balance DESC);
+      SHOW INDEXES FROM accounts;
+      ```
+
+      ```sql JSON Support
+      CREATE TABLE users (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        profile JSONB
+      );
+
+      INSERT INTO users (profile) VALUES
+        ('{"name": "Alice", "age": 30}'),
+        ('{"name": "Bob", "age": 25}');
+
+      SELECT profile->>'name' as name FROM users;
+      ```
+
+      ```sql Window Functions
+      SELECT 
+        balance,
+        AVG(balance) OVER () as avg_balance,
+        balance - AVG(balance) OVER () as diff
+      FROM accounts;
+      ```
+    </CodeGroup>
+  </Step>
+</Steps>
+
+## Common SQL Shell Commands
+
+The CockroachDB SQL shell supports special commands:
+
+```sql
+\q                  -- Exit the SQL shell
+\d                  -- List all tables
+\d table_name       -- Describe a table
+\dt                 -- List all tables (PostgreSQL compatible)
+\l                  -- List all databases
+\c database_name    -- Connect to a database
+\!                  -- Execute a shell command
+```
+
+## Testing Distributed Transactions
+
+Even in a single-node cluster, you can see CockroachDB's transaction handling:
+
+```sql
+-- Start a transaction
+BEGIN;
+
+-- Make changes
+UPDATE accounts SET balance = balance + 100 WHERE balance < 1000;
+
+-- Check the changes (visible only in this transaction)
+SELECT * FROM accounts;
+
+-- Roll back if needed
+ROLLBACK;
+
+-- Or commit to apply changes
+COMMIT;
+```
+
+<Warning>
+All transactions in CockroachDB are **serializable** by default, preventing anomalies like dirty reads, non-repeatable reads, and phantom reads.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Multi-Node Cluster" icon="network-wired" href="https://www.cockroachlabs.com/docs/stable/start-a-local-cluster.html">
+    Start a local multi-node cluster to see replication in action
+  </Card>
+  <Card title="Production Installation" icon="server" href="/installation">
+    Deploy CockroachDB for production use
+  </Card>
+  <Card title="Build an App" icon="code" href="https://www.cockroachlabs.com/docs/stable/hello-world-example-apps.html">
+    Connect your application using client drivers
+  </Card>
+  <Card title="Learn SQL" icon="graduation-cap" href="https://www.cockroachlabs.com/docs/stable/learn-cockroachdb-sql.html">
+    Master CockroachDB SQL features and best practices
+  </Card>
+</CardGroup>
+
+## Stopping the Cluster
+
+To stop the cluster:
+
+1. In the terminal running CockroachDB, press `Ctrl+C`
+2. Wait for the graceful shutdown to complete
+
+```bash
+# Clean up data (optional)
+rm -rf cockroach-data/
+```
+
+<Tip>
+**Pro tip**: For persistent development, keep your data directory and restart with the same command. Your data will be preserved.
+</Tip>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Port already in use">
+    If ports 26257 or 8080 are already in use, specify different ports:
+
+    ```bash
+    cockroach start-single-node --insecure \
+      --listen-addr=localhost:26258 \
+      --http-addr=localhost:8081
+    ```
+  </Accordion>
+
+  <Accordion title="Connection refused">
+    Ensure the cluster is running and you're connecting to the correct host and port:
+
+    ```bash
+    cockroach sql --insecure --host=localhost:26257
+    ```
+  </Accordion>
+
+  <Accordion title="Out of disk space">
+    CockroachDB requires sufficient disk space. Check available space:
+
+    ```bash
+    df -h
+    ```
+
+    Specify a custom store location if needed:
+
+    ```bash
+    cockroach start-single-node --insecure --store=/path/to/storage
+    ```
+  </Accordion>
+</AccordionGroup>

@@ -1,0 +1,412 @@
+---
+title: Node Operations
+description: Manage node lifecycle operations including startup, shutdown, decommissioning, and recommissioning
+---
+
+## Overview
+
+Node operations involve managing individual CockroachDB nodes throughout their lifecycle. This includes starting nodes, gracefully shutting them down, decommissioning nodes for removal, and recommissioning nodes back into service.
+
+## Starting Nodes
+
+### Standard Node Start
+
+Start a node in a multi-node cluster:
+
+```bash
+cockroach start \
+  --insecure \
+  --store=path=/mnt/data \
+  --listen-addr=localhost:26257 \
+  --http-addr=localhost:8080 \
+  --join=host1:26257,host2:26257,host3:26257
+```
+
+<Note>
+  The first time nodes are started, you must run `cockroach init` to initialize the cluster before it can accept connections.
+</Note>
+
+### Key Start Flags
+
+| Flag | Description | Example |
+|------|-------------|--------|
+| `--store` | Storage location(s) | `--store=path=/mnt/data` |
+| `--listen-addr` | Node address for cluster communication | `--listen-addr=0.0.0.0:26257` |
+| `--advertise-addr` | Advertised address to other nodes | `--advertise-addr=node1.example.com:26257` |
+| `--http-addr` | Admin UI and API address | `--http-addr=0.0.0.0:8080` |
+| `--join` | Addresses of nodes to join | `--join=node1:26257,node2:26257` |
+| `--locality` | Node locality for geo-distribution | `--locality=region=us-east,zone=us-east-1a` |
+| `--cache` | Cache size for query results | `--cache=25%` |
+| `--max-sql-memory` | Maximum memory for SQL operations | `--max-sql-memory=25%` |
+
+### Background Mode
+
+Start a node in the background (daemon mode):
+
+```bash
+cockroach start \
+  --background \
+  --insecure \
+  --store=path=/mnt/data \
+  --join=host1:26257
+```
+
+When running in background mode, output is written to `cockroach-data/logs/` by default.
+
+## Stopping Nodes
+
+### Graceful Shutdown
+
+Stop a node gracefully using the `quit` command:
+
+```bash
+cockroach quit --insecure --host=localhost:26257
+```
+
+The graceful shutdown process:
+
+<Steps>
+  <Step title="Drain the node">
+    - Stop accepting new SQL connections
+    - Complete in-flight SQL transactions
+    - Transfer range leases to other nodes
+  </Step>
+
+  <Step title="Wait for lease transfers">
+    The node waits for leases to migrate to other replicas before shutting down.
+  </Step>
+
+  <Step title="Shutdown">
+    After draining completes, the node process terminates.
+  </Step>
+</Steps>
+
+### Shutdown Options
+
+<CodeGroup>
+```bash Graceful Shutdown
+cockroach quit --insecure --host=localhost:26257
+```
+
+```bash With Timeout
+cockroach quit --insecure --host=localhost:26257 --drain-wait=5m
+```
+
+```bash Force Shutdown
+kill -SIGTERM <cockroach-pid>
+```
+</CodeGroup>
+
+<Warning>
+  Using `kill -9` or `SIGKILL` can cause data inconsistencies. Always use graceful shutdown or `SIGTERM`.
+</Warning>
+
+## Node Status Operations
+
+### Listing Nodes
+
+View all active nodes in the cluster:
+
+```bash
+cockroach node ls --insecure --host=localhost:26257
+```
+
+Output shows node IDs for active (running, non-decommissioned) members.
+
+### Detailed Node Status
+
+Get comprehensive status information:
+
+<CodeGroup>
+```bash All Nodes
+cockroach node status --insecure --host=localhost:26257
+```
+
+```bash Specific Node
+cockroach node status 3 --insecure --host=localhost:26257
+```
+
+```bash With Decommission Info
+cockroach node status --decommission --insecure --host=localhost:26257
+```
+
+```bash Complete Details
+cockroach node status --all --insecure --host=localhost:26257
+```
+</CodeGroup>
+
+### Status Fields
+
+The status output includes:
+
+- **id**: Node identifier
+- **address**: Network address for cluster communication
+- **sql_address**: SQL connection address
+- **build**: CockroachDB version
+- **started_at**: Node start timestamp
+- **updated_at**: Last liveness update
+- **locality**: Configured locality tiers
+- **is_available**: Whether node is reachable
+- **is_live**: Whether node is part of cluster consensus
+
+With `--ranges`:
+- **replicas_leaders**: Number of Raft leaders
+- **replicas_leaseholders**: Number of lease holders
+- **ranges**: Total ranges on node
+- **ranges_unavailable**: Unavailable ranges
+- **ranges_underreplicated**: Under-replicated ranges
+
+With `--decommission`:
+- **is_decommissioning**: Decommission in progress
+- **membership**: Cluster membership status (active/decommissioning/decommissioned)
+- **is_draining**: Node is draining connections
+
+## Decommissioning Nodes
+
+Decommissioning safely removes a node from the cluster by transferring its data to other nodes.
+
+### Decommission Process
+
+<Steps>
+  <Step title="Initiate decommission">
+    Start the decommission process for one or more nodes:
+
+    ```bash
+    cockroach node decommission 4 --insecure --host=localhost:26257
+    ```
+
+    Or decommission multiple nodes:
+
+    ```bash
+    cockroach node decommission 4 5 6 --insecure --host=localhost:26257
+    ```
+  </Step>
+
+  <Step title="Monitor progress">
+    The command displays real-time progress showing:
+    - Replica count decreasing
+    - Membership changing to 'decommissioning'
+    - Range transfers completing
+
+    ```
+    id | is_live | replicas | is_decommissioning | membership      | is_draining
+    ---+---------+----------+--------------------+-----------------+-------------
+     4 | true    |      142 | true               | decommissioning | false
+    ```
+  </Step>
+
+  <Step title="Wait for completion">
+    When replica count reaches 0, the node status changes to 'decommissioned':
+
+    ```
+    id | is_live | replicas | is_decommissioning | membership      | is_draining
+    ---+---------+----------+--------------------+-----------------+-------------
+     4 | true    |        0 | false              | decommissioned  | false
+    ```
+  </Step>
+
+  <Step title="Stop the node">
+    Once decommissioned, stop the node:
+
+    ```bash
+    cockroach quit --insecure --host=node4:26257
+    ```
+  </Step>
+</Steps>
+
+### Decommission Options
+
+<Accordion title="Decommission Wait Modes">
+  Control how long to wait for decommission to complete:
+
+  - `--wait=all` (default): Wait until decommission completes
+  - `--wait=none`: Return immediately after initiating
+
+  ```bash
+  # Return immediately
+  cockroach node decommission 4 --wait=none --insecure --host=localhost:26257
+  ```
+</Accordion>
+
+<Accordion title="Decommission Checks">
+  Pre-flight checks before decommissioning:
+
+  - `--checks=enabled` (default): Run readiness checks
+  - `--checks=skip`: Skip pre-flight checks
+  - `--checks=strict`: Require all checks to pass
+
+  ```bash
+  # Skip checks (not recommended)
+  cockroach node decommission 4 --checks=skip --insecure --host=localhost:26257
+  ```
+</Accordion>
+
+### Decommission Self
+
+Decommission the node you're connected to:
+
+```bash
+cockroach node decommission --self --insecure --host=localhost:26257
+```
+
+<Warning>
+  When decommissioning the node serving the request, the connection may drop before completion. Monitor status from another node.
+</Warning>
+
+### Decommission Scenarios
+
+**Scaling down a cluster:**
+```bash
+# Decommission 3 nodes to scale from 6 to 3 nodes
+cockroach node decommission 4 5 6 --insecure --host=localhost:26257
+```
+
+**Replacing a failed disk:**
+```bash
+# Decommission node with failed hardware
+cockroach node decommission 5 --insecure --host=localhost:26257
+
+# After hardware replacement, start a new node
+cockroach start --store=path=/new/disk/path --join=... 
+```
+
+**Migrating to new hardware:**
+```bash
+# Start new nodes first
+# Then decommission old nodes
+cockroach node decommission 1 2 3 --insecure --host=new-node:26257
+```
+
+## Recommissioning Nodes
+
+If you decommission a node by mistake or need to bring it back into service, use recommission:
+
+```bash
+cockroach node recommission 4 --insecure --host=localhost:26257
+```
+
+Recommissioning:
+- Resets the decommissioning state
+- Allows the node to accept replicas again
+- Rebalances data back to the node
+
+<Note>
+  You can only recommission a node that is still running. Once stopped, start a new node instead.
+</Note>
+
+### Recommission Multiple Nodes
+
+```bash
+cockroach node recommission 4 5 6 --insecure --host=localhost:26257
+```
+
+## Node Draining
+
+Draining is the process of preparing a node for shutdown:
+
+```bash
+cockroach node drain --insecure --host=localhost:26257
+```
+
+During draining:
+1. Node stops accepting new SQL connections
+2. Existing connections complete their transactions
+3. Range leases transfer to other nodes
+4. Node becomes ready for shutdown
+
+<Note>
+  The `quit` command automatically performs draining before shutdown.
+</Note>
+
+## Troubleshooting
+
+### Decommission Stalls
+
+If decommission appears stuck:
+
+<Steps>
+  <Step title="Check replica count">
+    ```bash
+    cockroach node status --decommission --insecure --host=localhost:26257
+    ```
+  </Step>
+
+  <Step title="Identify blocking ranges">
+    Look for under-replicated or unavailable ranges preventing replica movement.
+  </Step>
+
+  <Step title="Verify cluster health">
+    Ensure enough healthy nodes exist to accept replicas:
+    - Cluster must have sufficient capacity
+    - At least 3 nodes for default replication factor
+    - All remaining nodes must be live
+  </Step>
+
+  <Step title="Check constraints">
+    Zone configurations may prevent replica placement on available nodes.
+  </Step>
+</Steps>
+
+### Node Won't Start
+
+**Common causes:**
+
+<Accordion title="Clock skew too large">
+  Nodes must be within 500ms of each other:
+  ```bash
+  # Check clock offset in logs
+  grep "clock offset" cockroach-data/logs/cockroach.log
+  ```
+
+  Solution: Synchronize clocks using NTP.
+</Accordion>
+
+<Accordion title="Store path issues">
+  - Directory doesn't exist or lacks permissions
+  - Store path contains data from different cluster
+  - Disk full or hardware failure
+
+  Check logs for specific error messages.
+</Accordion>
+
+<Accordion title="Network connectivity">
+  - Cannot reach nodes in `--join` list
+  - Firewall blocking ports 26257 or 8080
+  - DNS resolution failures
+
+  Test connectivity:
+  ```bash
+  telnet node1.example.com 26257
+  ```
+</Accordion>
+
+### Node Liveness Issues
+
+**Node shows as not live:**
+
+Possible causes:
+- Network partition
+- Node overloaded (CPU/memory)
+- Clock synchronization issues
+- Disk I/O problems
+
+Check node logs and system metrics to diagnose.
+
+## Best Practices
+
+<Accordion title="Node Operation Recommendations">
+  1. **Always use graceful shutdown**: Prevents data inconsistencies
+  2. **Monitor decommission progress**: Don't stop nodes until fully decommissioned
+  3. **Maintain cluster capacity**: Ensure cluster can handle replica transfers
+  4. **Decommission one node at a time**: Prevents overwhelming the cluster
+  5. **Wait between operations**: Allow cluster to stabilize between changes
+  6. **Keep node counts odd**: Prevents quorum split scenarios (3, 5, 7)
+  7. **Test in staging**: Practice operations in non-production first
+  8. **Document node roles**: Track which nodes serve specific workloads
+</Accordion>
+
+## See Also
+
+- [Cluster Management](/admin/cluster-management) - Cluster-wide operations
+- [Configuration](/admin/configuration) - Node configuration options
+- [Monitoring](/admin/monitoring) - Node health monitoring

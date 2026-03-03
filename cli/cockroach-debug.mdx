@@ -1,0 +1,578 @@
+---
+title: cockroach debug
+description: Advanced debugging and troubleshooting tools for CockroachDB
+---
+
+The `cockroach debug` command provides advanced tools for debugging and troubleshooting CockroachDB clusters.
+
+<Warning>
+Debug commands are **advanced tools** intended for troubleshooting by experienced operators. Many commands operate directly on storage files and should be used with caution.
+</Warning>
+
+## Synopsis
+
+```bash
+cockroach debug [command] [flags]
+```
+
+## Description
+
+Debug commands help diagnose issues with CockroachDB clusters, inspect internal state, and extract data from failed nodes. These commands are particularly useful when:
+
+- A node has failed and cannot restart
+- Investigating data corruption or consistency issues
+- Troubleshooting performance problems
+- Extracting data from offline stores
+- Analyzing cluster internals
+
+## Key Subcommands
+
+### debug zip
+
+Collect diagnostic information from all nodes in a cluster.
+
+```bash
+cockroach debug zip <output-file> [flags]
+```
+
+Creates a ZIP archive containing:
+- Cluster status and configuration
+- Node logs and stack traces
+- Range distribution and replica status
+- Schema and table statistics
+- Recent query activity
+- System metrics and events
+
+<Note>
+`debug zip` is the **primary tool** for gathering information when reporting bugs or troubleshooting issues.
+</Note>
+
+#### Flags
+
+<ParamField path="--include-range-info" type="boolean" default="false">
+  Include detailed range replica information (can be large).
+</ParamField>
+
+<ParamField path="--exclude-nodes" type="string">
+  Comma-separated list of node IDs to exclude from collection.
+</ParamField>
+
+<ParamField path="--timeout" type="duration" default="2m">
+  Maximum time to wait for data collection per node.
+</ParamField>
+
+#### Examples
+
+<CodeGroup>
+```bash Basic Collection
+cockroach debug zip debug.zip --host=localhost:26257 --insecure
+```
+
+```bash With Range Info
+cockroach debug zip debug.zip --include-range-info --certs-dir=certs
+```
+
+```bash Exclude Nodes
+cockroach debug zip debug.zip --exclude-nodes=3,4 --insecure
+```
+
+```bash Custom Timeout
+cockroach debug zip debug.zip --timeout=5m --insecure
+```
+</CodeGroup>
+
+---
+
+### debug keys
+
+Dump all keys in a store's storage engine.
+
+```bash
+cockroach debug keys <store-directory> [flags]
+```
+
+<Warning>
+This command reads from storage files directly. The node must be **stopped** before running this command.
+</Warning>
+
+#### Flags
+
+<ParamField path="--values" type="boolean" default="false">
+  Print key values in addition to keys.
+</ParamField>
+
+<ParamField path="--sizes" type="boolean" default="false">
+  Print key and value sizes.
+</ParamField>
+
+<ParamField path="--decode-as-table-desc" type="string">
+  Base64-encoded table descriptor for decoding row data.
+</ParamField>
+
+#### Examples
+
+```bash
+# List all keys
+cockroach debug keys /path/to/cockroach-data
+
+# List keys with values
+cockroach debug keys /path/to/cockroach-data --values
+
+# Show key sizes
+cockroach debug keys /path/to/cockroach-data --sizes
+```
+
+---
+
+### debug range-data
+
+Dump all data for a specific range.
+
+```bash
+cockroach debug range-data <store-directory> <range-id> [flags]
+```
+
+<Note>
+Use `debug range-descriptors` first to find range IDs.
+</Note>
+
+#### Flags
+
+<ParamField path="--replicated" type="boolean" default="false">
+  Show only replicated data (excludes local Raft state).
+</ParamField>
+
+#### Examples
+
+```bash
+# Show all data for range 42
+cockroach debug range-data /path/to/cockroach-data 42
+
+# Show only replicated data
+cockroach debug range-data /path/to/cockroach-data 42 --replicated
+```
+
+---
+
+### debug range-descriptors
+
+Print all range descriptors in a store.
+
+```bash
+cockroach debug range-descriptors <store-directory>
+```
+
+Shows range boundaries, replica locations, and range metadata.
+
+**Example:**
+
+```bash
+cockroach debug range-descriptors /path/to/cockroach-data
+```
+
+---
+
+### debug raft-log
+
+Print the Raft log for a specific range.
+
+```bash
+cockroach debug raft-log <store-directory> <range-id>
+```
+
+Displays all Raft log entries for investigating consensus issues.
+
+**Example:**
+
+```bash
+cockroach debug raft-log /path/to/cockroach-data 42
+```
+
+---
+
+### debug estimate-gc
+
+Estimate garbage collection impact without performing it.
+
+```bash
+cockroach debug estimate-gc <store-directory> [range-id] [ttl-seconds] [intent-age]
+```
+
+<Note>
+Helps predict GC impact before running actual garbage collection.
+</Note>
+
+#### Arguments
+
+- `store-directory` - Path to node's data directory (required)
+- `range-id` - Specific range ID to analyze (optional, defaults to all)
+- `ttl-seconds` - GC TTL in seconds (optional, defaults to 86400 = 24 hours)
+- `intent-age` - Intent age threshold as duration (optional, defaults to 2h)
+
+#### Examples
+
+<CodeGroup>
+```bash All Ranges
+cockroach debug estimate-gc /path/to/cockroach-data
+```
+
+```bash Specific Range
+cockroach debug estimate-gc /path/to/cockroach-data 42
+```
+
+```bash Custom TTL
+cockroach debug estimate-gc /path/to/cockroach-data 42 3600
+```
+
+```bash Custom Intent Age
+cockroach debug estimate-gc /path/to/cockroach-data 42 86400 1h
+```
+</CodeGroup>
+
+---
+
+### debug compact
+
+Manually compact storage engine SSTables.
+
+```bash
+cockroach debug compact <store-directory> [flags]
+```
+
+<Warning>
+Stop the node before running compaction. This operation can take significant time for large stores.
+</Warning>
+
+#### Flags
+
+<ParamField path="--max-concurrency" type="int" default="GOMAXPROCS">
+  Maximum concurrent compaction operations.
+</ParamField>
+
+#### Example
+
+```bash
+cockroach debug compact /path/to/cockroach-data --max-concurrency=4
+```
+
+---
+
+### debug check-store
+
+Run consistency checks on store data files.
+
+```bash
+cockroach debug check-store <store-directory> [flags]
+```
+
+Verifies:
+- SSTable integrity
+- Manifest consistency  
+- Key ordering
+- File checksums
+
+**Example:**
+
+```bash
+cockroach debug check-store /path/to/cockroach-data
+```
+
+---
+
+### debug ballast
+
+Create a ballast file to reserve disk space.
+
+```bash
+cockroach debug ballast <file-path> [flags]
+```
+
+<Note>
+Ballast files can be deleted in emergencies to free disk space, allowing the node to continue operating.
+</Note>
+
+#### Flags
+
+<ParamField path="--size" type="string">
+  Size of ballast file. Accepts bytes, size suffixes (e.g., `1GB`), or percentage of disk.
+</ParamField>
+
+#### Examples
+
+<CodeGroup>
+```bash Fixed Size
+cockroach debug ballast /path/to/ballast.txt --size=10GB
+```
+
+```bash Percentage
+cockroach debug ballast /path/to/ballast.txt --size=5%
+```
+</CodeGroup>
+
+---
+
+### debug decode-key
+
+Decode hex or base64-encoded keys.
+
+```bash
+cockroach debug decode-key <encoded-key> [flags]
+```
+
+#### Flags
+
+<ParamField path="--encoding" type="string" default="hex">
+  Key encoding format: `hex` or `base64`.
+</ParamField>
+
+<ParamField path="--user-key" type="boolean" default="false">
+  Decode as user key (without MVCC timestamp).
+</ParamField>
+
+#### Examples
+
+<CodeGroup>
+```bash Hex Encoded
+cockroach debug decode-key BB89F902ADB43000151C2D1ED07DE6C009
+```
+
+```bash Base64 Encoded
+cockroach debug decode-key --encoding=base64 u4n5Aq20MAAVE...
+```
+
+```bash User Key
+cockroach debug decode-key BB89F902ADB4 --user-key
+```
+</CodeGroup>
+
+---
+
+### debug decode-value
+
+Decode hex-encoded key-value pairs.
+
+```bash
+cockroach debug decode-value <hex-key> <hex-value>
+```
+
+Displays the decoded and pretty-printed value.
+
+**Example:**
+
+```bash
+cockroach debug decode-value BB89F902ADB4 0A0673797374656D
+```
+
+---
+
+### debug merge-logs
+
+Merge log files from multiple nodes into a single stream.
+
+```bash
+cockroach debug merge-logs <log-file-pattern>... [flags]
+```
+
+<Note>
+Extremely useful for analyzing distributed behavior across nodes.
+</Note>
+
+#### Flags
+
+<ParamField path="--from" type="timestamp">
+  Filter messages before this time.
+</ParamField>
+
+<ParamField path="--to" type="timestamp">
+  Filter messages after this time.
+</ParamField>
+
+<ParamField path="--filter" type="regex">
+  Regular expression to filter log messages.
+</ParamField>
+
+<ParamField path="--program-filter" type="regex">
+  Filter by program name (cockroach, cockroach-sql, etc.).
+</ParamField>
+
+#### Examples
+
+<CodeGroup>
+```bash Merge All Logs
+cockroach debug merge-logs '/var/log/cockroach/*.log'
+```
+
+```bash Time Range
+cockroach debug merge-logs '*.log' \
+  --from='2024-03-01 10:00:00' \
+  --to='2024-03-01 11:00:00'
+```
+
+```bash Filter Messages
+cockroach debug merge-logs '*.log' --filter='ERROR|FATAL'
+```
+</CodeGroup>
+
+---
+
+### debug gossip-values
+
+Dump gossip network values from a running node.
+
+```bash
+cockroach debug gossip-values [flags]
+```
+
+Shows cluster-wide gossip information including:
+- Node descriptors
+- Store descriptors
+- Liveness records
+- Cluster ID
+
+**Example:**
+
+```bash
+cockroach debug gossip-values --host=localhost:26257 --insecure
+```
+
+---
+
+### debug list-files
+
+List files managed by the storage engine.
+
+```bash
+cockroach debug list-files <store-directory> [flags]
+```
+
+Shows SSTables, WAL files, manifest, and metadata files.
+
+**Example:**
+
+```bash
+cockroach debug list-files /path/to/cockroach-data
+```
+
+## Pebble Tool Integration
+
+CockroachDB includes the Pebble storage engine debugging tool:
+
+```bash
+cockroach debug pebble [command]
+```
+
+Supports all Pebble tool commands for low-level storage inspection:
+
+- `db` - Database introspection
+- `manifest` - Manifest file inspection  
+- `sstable` - SSTable analysis
+- `wal` - Write-ahead log inspection
+
+**Example:**
+
+```bash
+# Inspect manifest
+cockroach debug pebble manifest dump /path/to/MANIFEST-000001
+
+# Analyze SSTable
+cockroach debug pebble sstable scan /path/to/000123.sst
+```
+
+## Connection Flags
+
+Commands that connect to running clusters support:
+
+<ParamField path="--host" type="string" default="localhost:26257">
+  Node to connect to.
+</ParamField>
+
+<ParamField path="--certs-dir" type="string">
+  Certificate directory for secure connections.
+</ParamField>
+
+<ParamField path="--insecure" type="boolean" default="false">
+  Connect without encryption.
+</ParamField>
+
+## Common Use Cases
+
+### Investigating Failed Node
+
+```bash
+# 1. Check store integrity
+cockroach debug check-store /mnt/cockroach-data
+
+# 2. List range descriptors
+cockroach debug range-descriptors /mnt/cockroach-data
+
+# 3. Examine specific range
+cockroach debug range-data /mnt/cockroach-data 42
+```
+
+### Troubleshooting Performance
+
+```bash
+# 1. Collect cluster diagnostics
+cockroach debug zip debug.zip --include-range-info --insecure
+
+# 2. Analyze GC impact
+cockroach debug estimate-gc /mnt/cockroach-data
+
+# 3. Check gossip state
+cockroach debug gossip-values --insecure
+```
+
+### Analyzing Distributed Issues
+
+```bash
+# Merge logs from all nodes
+cockroach debug merge-logs '/var/log/node*/cockroach.log' \
+  --filter='range.*42' \
+  --from='2024-03-01 10:00:00'
+```
+
+## Best Practices
+
+<Warning>
+**Important Safety Guidelines:**
+
+1. **Always stop the node** before running commands that access storage files directly
+2. **Make backups** before running any commands that modify storage
+3. **Test on non-production** clusters first when possible
+4. **Consult documentation** or support before using unfamiliar debug commands
+5. **Never modify** raw storage files manually
+</Warning>
+
+<Note>
+**When to Use Debug Commands:**
+
+- Node won't start and logs don't provide sufficient information
+- Investigating suspected data corruption
+- Analyzing performance issues with storage layer
+- Extracting data from failed clusters
+- Working with Cockroach Labs support on complex issues
+</Note>
+
+## Troubleshooting
+
+### Cannot Open Store
+
+- Ensure node is stopped
+- Verify you have read permissions on data directory
+- Check that encryption keys are available (if using encryption)
+- Ensure sufficient disk space
+
+### Encryption Errors
+
+If using encrypted stores, ensure encryption keys are properly configured:
+
+```bash
+export COCKROACH_ENCRYPTION_KEY="path/to/key"
+cockroach debug keys /path/to/encrypted-store
+```
+
+## See Also
+
+- [Start a Cluster](/cli/cockroach-start)
+- [Node Management](/cli/cockroach-node)
+- [SQL Shell](/cli/cockroach-sql)

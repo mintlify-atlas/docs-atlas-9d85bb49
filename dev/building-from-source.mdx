@@ -1,0 +1,227 @@
+---
+title: Building from Source
+description: Learn how to build CockroachDB from source using Bazel and the dev tool
+---
+
+CockroachDB is a distributed SQL database written in Go. The build system uses Bazel, but most operations are wrapped through the `./dev` tool for convenience.
+
+## Prerequisites
+
+Before building CockroachDB from source, ensure you have the required dependencies installed.
+
+<Steps>
+  <Step title="Install Dependencies">
+    Follow the bootstrap script for your platform:
+    
+    ```bash Debian/Ubuntu
+    ./build/bootstrap/bootstrap-debian.sh
+    ```
+    
+    This installs:
+    - Go (correct version as specified in the project)
+    - Bazel build system
+    - Required development libraries
+  </Step>
+
+  <Step title="Clone the Repository">
+    ```bash
+    git clone https://github.com/cockroachdb/cockroach.git
+    cd cockroach
+    ```
+  </Step>
+
+  <Step title="Verify Installation">
+    Check that the `./dev` tool is available:
+    
+    ```bash
+    ./dev --help
+    ```
+  </Step>
+</Steps>
+
+<Note>
+  The `./dev` tool automatically builds itself on first run. It uses Bazel internally and caches the binary at `bin/dev-versions/dev.$VERSION`.
+</Note>
+
+## Building the CockroachDB Binary
+
+The `./dev build` command is the primary way to build CockroachDB components.
+
+### Full Binary with UI
+
+```bash
+./dev build cockroach
+```
+
+This builds the complete CockroachDB binary including the web UI. The output is placed in `artifacts/cockroach`.
+
+<Warning>
+  Building the full binary is **slow** (can take 10+ minutes on first build). Only do this when you need the complete package.
+</Warning>
+
+### Short Build (Recommended for Development)
+
+```bash
+./dev build short
+```
+
+This builds CockroachDB without the web UI and is significantly faster. Use this for most development work.
+
+### Building Specific Packages
+
+<CodeGroup>
+```bash Single Package
+# Build a specific package
+./dev build pkg/util/log
+```
+
+```bash Package Tests
+# Build tests for a package (useful as compilation check)
+./dev build pkg/util/log:log_test
+```
+
+```bash Multiple Targets
+# Build multiple targets
+./dev build pkg/kv/kvserver pkg/sql
+```
+</CodeGroup>
+
+## Build Options and Flags
+
+The `./dev build` command supports various options:
+
+```bash
+./dev build --help
+```
+
+### Common Build Scenarios
+
+<Accordion title="Cross-compilation">
+  Build for different platforms:
+  
+  ```bash
+  # Cross-compile for Linux ARM
+  ./dev build cockroach --cross=linuxarm
+  
+  # Cross-compile standard Linux build
+  ./dev build cockroach --cross
+  ```
+  
+  Cross-compiled binaries are placed in the `artifacts/` directory.
+</Accordion>
+
+<Accordion title="Building with GEOS libraries">
+  For geospatial support:
+  
+  ```bash
+  ./dev build cockroach geos --cross
+  ```
+  
+  This builds both the cockroach binary and required libgeos libraries.
+</Accordion>
+
+<Accordion title="Docker image builds">
+  To build a deployment Docker image:
+  
+  1. Build the cross-compiled binary:
+     ```bash
+     ./dev build cockroach geos --cross
+     ```
+  
+  2. Copy artifacts to deploy directory:
+     ```bash
+     cp ./artifacts/{cockroach,libgeos.so,libgeos_c.so} ./build/deploy
+     cp ./LICENSE ./licenses/THIRD-PARTY-NOTICES.txt ./build/deploy
+     ```
+  
+  3. Build the Docker image:
+     ```bash
+     cd ./build/deploy
+     docker build -t localhost/cockroach:latest .
+     ```
+</Accordion>
+
+## Using the Bazel Builder Container
+
+For consistent builds across platforms, use the `bazelbuilder` Docker container:
+
+```bash
+./dev builder
+```
+
+This drops you into a containerized environment with all build dependencies pre-installed.
+
+<Note>
+  Ensure Docker grants at least 4GB of RAM to containers. The default 2GB limit may be insufficient for building CockroachDB.
+</Note>
+
+## Build Performance Tips
+
+<CardGroup cols={2}>
+  <Card title="Incremental Builds" icon="rocket">
+    Bazel performs incremental builds automatically. Subsequent builds only recompile changed components.
+  </Card>
+  
+  <Card title="Remote Cache" icon="cloud">
+    CockroachDB uses remote caching for Bazel. Most dependencies are pre-cached, speeding up initial builds.
+  </Card>
+  
+  <Card title="Build Short" icon="zap">
+    Use `./dev build short` instead of full builds during development. It's 3-5x faster.
+  </Card>
+  
+  <Card title="Specific Packages" icon="bullseye">
+    Build only the packages you're working on rather than the entire binary.
+  </Card>
+</CardGroup>
+
+## Troubleshooting Build Issues
+
+### Build Fails with Memory Errors
+
+Increase Docker memory allocation or reduce parallelism:
+
+```bash
+# Reduce Bazel parallelism
+bazel build --jobs=4 //pkg/cmd/cockroach
+```
+
+### Stale Build Artifacts
+
+Clean and rebuild:
+
+```bash
+# Force rebuild of dev tool
+DEV_FORCE_REBUILD=1 ./dev build short
+
+# Clean Bazel cache (use sparingly)
+bazel clean
+```
+
+### Missing Dependencies
+
+Re-run the bootstrap script:
+
+```bash
+./build/bootstrap/bootstrap-debian.sh
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Running Tests" icon="flask" href="/dev/testing">
+    Learn how to run the test suite
+  </Card>
+  
+  <Card title="Code Structure" icon="folder-tree" href="/dev/code-structure">
+    Understand the codebase organization
+  </Card>
+  
+  <Card title="Contributing" icon="code-pull-request" href="/dev/contributing">
+    Read the contribution guidelines
+  </Card>
+  
+  <Card title="Code Generation" icon="wand-magic-sparkles" href="/dev/testing#code-generation">
+    Learn about generated code
+  </Card>
+</CardGroup>

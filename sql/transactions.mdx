@@ -1,0 +1,608 @@
+---
+title: Transactions
+description: Transaction control, isolation levels, and concurrency management in CockroachDB
+---
+
+Transactions ensure that a group of SQL statements execute atomically - either all succeed or all fail together. CockroachDB provides ACID-compliant transactions with multiple isolation levels.
+
+## Transaction Basics
+
+A transaction groups multiple SQL statements into a single atomic unit of work.
+
+<CodeGroup>
+```sql Basic Transaction
+BEGIN;
+
+UPDATE accounts SET balance = balance - 100 WHERE id = 1;
+UPDATE accounts SET balance = balance + 100 WHERE id = 2;
+
+COMMIT;
+```
+
+```sql Transaction with Rollback
+BEGIN;
+
+INSERT INTO orders (user_id, total) VALUES (1, 100.00);
+INSERT INTO order_items (order_id, product_id, quantity) 
+  VALUES (1001, 5, 2);
+
+-- Something went wrong
+ROLLBACK;
+```
+
+```sql Implicit Transaction
+-- Single statements are automatically wrapped in a transaction
+UPDATE users SET status = 'active' WHERE id = 1;
+-- Automatically committed if successful
+```
+</CodeGroup>
+
+## Transaction Syntax
+
+### BEGIN Transaction
+
+<Tabs>
+  <Tab title="Basic BEGIN">
+    ```sql
+    BEGIN;
+    -- or
+    BEGIN TRANSACTION;
+    -- or
+    START TRANSACTION;
+    ```
+  </Tab>
+  
+  <Tab title="With Isolation Level">
+    ```sql
+    BEGIN ISOLATION LEVEL SERIALIZABLE;
+    
+    BEGIN ISOLATION LEVEL READ COMMITTED;
+    
+    BEGIN ISOLATION LEVEL REPEATABLE READ;
+    ```
+  </Tab>
+  
+  <Tab title="With Priority">
+    ```sql
+    BEGIN PRIORITY HIGH;
+    
+    BEGIN PRIORITY NORMAL;
+    
+    BEGIN PRIORITY LOW;
+    
+    -- Combine isolation and priority
+    BEGIN ISOLATION LEVEL SERIALIZABLE PRIORITY HIGH;
+    ```
+  </Tab>
+  
+  <Tab title="Read Only">
+    ```sql
+    BEGIN READ ONLY;
+    
+    -- Read-only transactions can be more efficient
+    SELECT * FROM users WHERE status = 'active';
+    
+    COMMIT;
+    ```
+  </Tab>
+</Tabs>
+
+### COMMIT Transaction
+
+```sql
+-- Standard commit
+COMMIT;
+
+-- Explicit syntax (same as COMMIT)
+COMMIT TRANSACTION;
+COMMIT WORK;
+```
+
+### ROLLBACK Transaction
+
+```sql
+-- Full rollback
+ROLLBACK;
+
+-- Explicit syntax (same as ROLLBACK)
+ROLLBACK TRANSACTION;
+ROLLBACK WORK;
+```
+
+<Note>
+CockroachDB does not support SAVEPOINT or partial rollbacks. You must roll back the entire transaction.
+</Note>
+
+## Isolation Levels
+
+CockroachDB supports three SQL isolation levels that map to internal isolation implementations.
+
+<Tabs>
+  <Tab title="SERIALIZABLE">
+    ```sql
+    BEGIN ISOLATION LEVEL SERIALIZABLE;
+    
+    -- Strongest isolation
+    -- Transactions appear to execute serially
+    -- May retry on conflicts
+    
+    UPDATE inventory SET quantity = quantity - 1 
+    WHERE product_id = 5 AND quantity > 0;
+    
+    INSERT INTO orders (product_id, quantity) 
+    VALUES (5, 1);
+    
+    COMMIT;
+    ```
+    
+    **Characteristics:**
+    - Strongest consistency guarantees
+    - Prevents all anomalies (dirty reads, non-repeatable reads, phantoms)
+    - Default isolation level
+    - May experience transaction retries under contention
+  </Tab>
+  
+  <Tab title="REPEATABLE READ">
+    ```sql
+    BEGIN ISOLATION LEVEL REPEATABLE READ;
+    
+    -- Also called SNAPSHOT isolation
+    -- Reads see consistent snapshot
+    
+    SELECT COUNT(*) FROM orders WHERE status = 'pending';
+    -- Will see same count if queried again in this transaction
+    
+    COMMIT;
+    ```
+    
+    **Characteristics:**
+    - Reads operate on a consistent snapshot
+    - Prevents dirty reads and non-repeatable reads
+    - Better performance than SERIALIZABLE
+    - Mapped to Snapshot isolation internally
+  </Tab>
+  
+  <Tab title="READ COMMITTED">
+    ```sql
+    BEGIN ISOLATION LEVEL READ COMMITTED;
+    
+    -- Each statement sees latest committed data
+    -- Different statements may see different snapshots
+    
+    SELECT balance FROM accounts WHERE id = 1;
+    -- Another transaction commits here
+    SELECT balance FROM accounts WHERE id = 1;
+    -- May see different value
+    
+    COMMIT;
+    ```
+    
+    **Characteristics:**
+    - Each statement reads latest committed data
+    - Prevents dirty reads only
+    - Best performance for high-contention workloads
+    - Must be enabled via cluster setting
+  </Tab>
+</Tabs>
+
+### Isolation Level Mapping
+
+<Note>
+CockroachDB maps SQL isolation levels to internal implementations:
+
+- **SERIALIZABLE** → Serializable isolation
+- **REPEATABLE READ** / **SNAPSHOT** → Snapshot isolation  
+- **READ COMMITTED** / **READ UNCOMMITTED** → Read Committed isolation
+
+READ UNCOMMITTED is upgraded to READ COMMITTED (PostgreSQL does this too).
+</Note>
+
+### Setting Default Isolation
+
+```sql
+-- Session-level setting
+SET default_transaction_isolation = 'SERIALIZABLE';
+SET default_transaction_isolation = 'REPEATABLE READ';
+SET default_transaction_isolation = 'READ COMMITTED';
+
+-- Check current setting
+SHOW default_transaction_isolation;
+```
+
+## Transaction Priority
+
+Priority affects which transactions win during conflicts.
+
+<Tabs>
+  <Tab title="Priority Levels">
+    ```sql
+    -- HIGH priority (wins conflicts with NORMAL/LOW)
+    BEGIN PRIORITY HIGH;
+    UPDATE critical_data SET value = value + 1;
+    COMMIT;
+    
+    -- NORMAL priority (default)
+    BEGIN PRIORITY NORMAL;
+    UPDATE data SET value = value + 1;
+    COMMIT;
+    
+    -- LOW priority (yields to NORMAL/HIGH)
+    BEGIN PRIORITY LOW;
+    SELECT * FROM logs;
+    COMMIT;
+    ```
+  </Tab>
+  
+  <Tab title="Use Cases">
+    **HIGH priority:**
+    - Critical business transactions
+    - Time-sensitive operations
+    - Operations that must not be retried
+    
+    **NORMAL priority:**
+    - Standard application transactions
+    - Default for most use cases
+    
+    **LOW priority:**
+    - Background jobs
+    - Analytics queries
+    - Batch processing that can be retried
+  </Tab>
+  
+  <Tab title="Setting Priority">
+    ```sql
+    -- At transaction start
+    BEGIN PRIORITY HIGH;
+    
+    -- During transaction (before any statements)
+    BEGIN;
+    SET TRANSACTION PRIORITY HIGH;
+    UPDATE accounts SET balance = balance + 100;
+    COMMIT;
+    
+    -- Session default
+    SET default_transaction_priority = 'high';
+    ```
+  </Tab>
+</Tabs>
+
+## Transaction Retries
+
+CockroachDB may automatically retry transactions that encounter conflicts.
+
+<Warning>
+Automatic retries only work for implicit transactions (single statements) or when using client-side retry logic.
+</Warning>
+
+### Client-Side Retries
+
+<CodeGroup>
+```sql SAVEPOINT cockroach_restart
+BEGIN;
+SAVEPOINT cockroach_restart;
+
+-- Your transaction logic
+UPDATE inventory SET quantity = quantity - 1 WHERE product_id = 5;
+
+-- Check for retry
+RELEASE SAVEPOINT cockroach_restart;
+COMMIT;
+
+-- On retry error (40001), rollback to savepoint and retry
+```
+
+```python Python Example
+import psycopg2
+from psycopg2 import errorcodes
+
+def run_transaction(conn):
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            with conn.cursor() as cur:
+                cur.execute("BEGIN")
+                cur.execute("SAVEPOINT cockroach_restart")
+                
+                # Transaction logic
+                cur.execute(
+                    "UPDATE accounts SET balance = balance - %s WHERE id = %s",
+                    (100, 1)
+                )
+                cur.execute(
+                    "UPDATE accounts SET balance = balance + %s WHERE id = %s",
+                    (100, 2)
+                )
+                
+                cur.execute("RELEASE SAVEPOINT cockroach_restart")
+                cur.execute("COMMIT")
+                return  # Success
+                
+        except psycopg2.Error as e:
+            if e.pgcode == errorcodes.SERIALIZATION_FAILURE:
+                # Retry transaction
+                conn.rollback()
+                continue
+            else:
+                raise
+    
+    raise Exception("Transaction failed after retries")
+```
+</CodeGroup>
+
+### Retry Errors
+
+- **40001** - `serialization_failure` - Transaction conflict, retry possible
+- **40003** - `statement_completion_unknown` - Uncertain if statement committed
+
+## Transaction State
+
+### Check Transaction Status
+
+```sql
+-- Show current transaction status
+SHOW TRANSACTION STATUS;
+
+-- Show transaction isolation level
+SHOW TRANSACTION ISOLATION LEVEL;
+
+-- Show transaction priority
+SHOW TRANSACTION PRIORITY;
+
+-- Check if in transaction
+SELECT current_setting('transaction_isolation');
+```
+
+### Transaction Timestamps
+
+```sql
+BEGIN;
+
+-- Timestamp at transaction start
+SELECT TRANSACTION_TIMESTAMP();
+
+-- Same value throughout transaction
+SELECT TRANSACTION_TIMESTAMP();
+
+-- Statement timestamp (changes per statement)
+SELECT STATEMENT_TIMESTAMP();
+
+COMMIT;
+```
+
+## AS OF SYSTEM TIME (Historical Reads)
+
+Query data as it existed at a specific point in time.
+
+<Tabs>
+  <Tab title="Timestamp Query">
+    ```sql
+    -- Read data from 1 hour ago
+    SELECT * FROM users 
+    AS OF SYSTEM TIME '-1h';
+    
+    -- Specific timestamp
+    SELECT * FROM orders 
+    AS OF SYSTEM TIME '2026-03-03 10:00:00';
+    
+    -- Interval syntax
+    SELECT * FROM products 
+    AS OF SYSTEM TIME INTERVAL '-30m';
+    ```
+  </Tab>
+  
+  <Tab title="Transaction Time Travel">
+    ```sql
+    BEGIN AS OF SYSTEM TIME '-1h';
+    
+    -- All queries in this transaction see data from 1 hour ago
+    SELECT COUNT(*) FROM orders;
+    SELECT * FROM order_items WHERE order_id = 100;
+    
+    COMMIT;
+    ```
+  </Tab>
+  
+  <Tab title="Follower Reads">
+    ```sql
+    -- Read from closest replica (reduced latency)
+    SELECT * FROM users 
+    AS OF SYSTEM TIME follower_read_timestamp();
+    
+    -- Slightly stale but much faster
+    -- Useful for read-heavy workloads
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+Historical reads are subject to the garbage collection window (default 25 hours). Data older than this window may not be available.
+</Note>
+
+## Transaction Settings
+
+### Session Settings
+
+```sql
+-- Default isolation level
+SET default_transaction_isolation = 'SERIALIZABLE';
+
+-- Default priority
+SET default_transaction_priority = 'normal';
+
+-- Statement timeout
+SET statement_timeout = '30s';
+
+-- Idle in transaction timeout
+SET idle_in_transaction_session_timeout = '60s';
+```
+
+### Transaction-Specific Settings
+
+```sql
+BEGIN;
+
+-- Set for current transaction only
+SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+SET TRANSACTION PRIORITY HIGH;
+SET TRANSACTION READ ONLY;
+
+-- Your queries here
+
+COMMIT;
+```
+
+## Distributed Transactions
+
+CockroachDB transactions can span multiple nodes and even regions.
+
+### Multi-Region Considerations
+
+<CodeGroup>
+```sql Regional Transactions
+-- Transaction in a specific region
+BEGIN;
+
+-- Queries automatically route to appropriate regions
+UPDATE users SET last_login = now() WHERE id = 1;
+INSERT INTO login_log (user_id, timestamp) VALUES (1, now());
+
+COMMIT;
+```
+
+```sql Latency Optimization
+-- Use AS OF SYSTEM TIME for non-critical reads
+SELECT * FROM catalog 
+AS OF SYSTEM TIME follower_read_timestamp();
+
+-- Reduces cross-region latency
+```
+</CodeGroup>
+
+### Transaction Contention
+
+```sql
+-- View lock contention
+SELECT * FROM crdb_internal.cluster_locks;
+
+-- View transaction statistics
+SELECT * FROM crdb_internal.node_transaction_statistics;
+
+-- Identify slow transactions
+SELECT * FROM crdb_internal.cluster_queries 
+WHERE start_time < now() - INTERVAL '30s';
+```
+
+## Best Practices
+
+<Note>
+**Transaction Best Practices:**
+
+1. **Keep transactions short** - Reduces contention and lock duration
+2. **Use appropriate isolation** - SERIALIZABLE for strong consistency, READ COMMITTED for high throughput
+3. **Set transaction priority** - HIGH for critical operations, LOW for background jobs
+4. **Implement retry logic** - Handle serialization failures in application code
+5. **Batch operations** - Combine multiple statements in single transaction when atomic
+6. **Avoid long-running transactions** - Set statement_timeout and idle_in_transaction_session_timeout
+7. **Use AS OF SYSTEM TIME** - For analytics and non-critical reads
+8. **Read-only when possible** - Declare READ ONLY transactions for better performance
+</Note>
+
+## Common Patterns
+
+### Bank Transfer
+
+```sql
+BEGIN;
+
+-- Verify balance
+SELECT balance FROM accounts WHERE id = 1 FOR UPDATE;
+
+-- Transfer money
+UPDATE accounts SET balance = balance - 100 WHERE id = 1;
+UPDATE accounts SET balance = balance + 100 WHERE id = 2;
+
+-- Record transaction
+INSERT INTO transfers (from_account, to_account, amount) 
+VALUES (1, 2, 100);
+
+COMMIT;
+```
+
+### Inventory Management
+
+```sql
+BEGIN ISOLATION LEVEL SERIALIZABLE;
+
+-- Check and decrement inventory
+UPDATE inventory 
+SET quantity = quantity - 1 
+WHERE product_id = 5 AND quantity > 0
+RETURNING quantity;
+
+-- Create order if inventory was available
+INSERT INTO orders (product_id, quantity) 
+VALUES (5, 1);
+
+COMMIT;
+```
+
+### Audit Trail
+
+```sql
+BEGIN;
+
+-- Make change
+UPDATE users SET status = 'inactive' WHERE id = 1
+RETURNING id, status;
+
+-- Record audit entry
+INSERT INTO audit_log (table_name, record_id, action, changed_at)
+VALUES ('users', 1, 'status_change', CURRENT_TIMESTAMP);
+
+COMMIT;
+```
+
+## Troubleshooting
+
+### Transaction Deadlocks
+
+```sql
+-- View current transactions
+SHOW TRANSACTIONS;
+
+-- Kill a long-running transaction
+CANCEL QUERY '<query_id>';
+```
+
+### Serialization Failures
+
+<CodeGroup>
+```sql Reduce Contention
+-- Use READ COMMITTED for high-contention workloads
+BEGIN ISOLATION LEVEL READ COMMITTED;
+```
+
+```sql Implement Retries
+-- Application-level retry logic
+-- See Client-Side Retries section above
+```
+</CodeGroup>
+
+### Monitor Transaction Performance
+
+```sql
+-- Active transactions
+SELECT * FROM crdb_internal.cluster_transactions;
+
+-- Transaction statistics
+SELECT * FROM crdb_internal.node_transaction_statistics
+ORDER BY count DESC
+LIMIT 10;
+```
+
+## See Also
+
+- [Statements](/sql/statements) - BEGIN, COMMIT, ROLLBACK syntax
+- [Constraints](/sql/constraints) - Data integrity enforcement
+- [Indexes](/sql/indexes) - Index usage in transactions
+- [SQL Performance](https://www.cockroachlabs.com/docs/stable/performance-best-practices-overview) - Optimization guide
