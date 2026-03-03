@@ -1,0 +1,126 @@
+{
+  "projectType": "data-platform",
+  "projectName": "CockroachDB",
+  "projectDescription": "A cloud-native distributed SQL database designed for high availability, effortless scale, and control over data placement.",
+  "theme": "aspen",
+  "primaryColor": "#1991FF",
+  "lightColor": "#6EC0FF",
+  "darkColor": "#0066CC",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Architecture",
+            "pages": [
+              "architecture/overview",
+              "architecture/distributed-sql",
+              "architecture/replication-layer",
+              "architecture/storage-layer",
+              "architecture/transaction-layer",
+              "architecture/sql-layer"
+            ]
+          },
+          {
+            "group": "SQL Reference",
+            "pages": [
+              "sql/data-types",
+              "sql/statements",
+              "sql/functions",
+              "sql/indexes",
+              "sql/constraints",
+              "sql/transactions"
+            ]
+          },
+          {
+            "group": "Administration",
+            "pages": [
+              "admin/cluster-management",
+              "admin/node-operations",
+              "admin/configuration",
+              "admin/monitoring",
+              "admin/logging",
+              "admin/metrics"
+            ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "operations/deployment",
+              "operations/scaling",
+              "operations/backup-restore",
+              "operations/security",
+              "operations/migration",
+              "operations/upgrade"
+            ]
+          },
+          {
+            "group": "Performance",
+            "pages": [
+              "performance/optimization",
+              "performance/query-tuning",
+              "performance/troubleshooting",
+              "performance/benchmarking"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Development",
+        "groups": [
+          {
+            "group": "Contributing",
+            "pages": [
+              "dev/building-from-source",
+              "dev/contributing",
+              "dev/testing",
+              "dev/code-structure"
+            ]
+          },
+          {
+            "group": "CLI Reference",
+            "pages": [
+              "cli/overview",
+              "cli/cockroach-start",
+              "cli/cockroach-sql",
+              "cli/cockroach-node",
+              "cli/cockroach-debug"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Distributed SQL with horizontal scalability",
+    "Strong consistency with ACID transactions",
+    "Automatic replication and rebalancing",
+    "Fault tolerance and high availability",
+    "PostgreSQL wire protocol compatibility",
+    "Multi-region deployment support",
+    "Built-in backup and restore",
+    "Online schema changes"
+  ],
+  "publicApiSurface": [
+    "SQL API (PostgreSQL wire protocol)",
+    "cockroach start - Start a CockroachDB node",
+    "cockroach sql - SQL client shell",
+    "cockroach node - Node management commands",
+    "cockroach init - Initialize a cluster",
+    "cockroach cert - Certificate management",
+    "cockroach debug - Debugging utilities",
+    "cockroach dump - Database export",
+    "cockroach workload - Workload generation",
+    "HTTP Admin API",
+    "gRPC Internal API"
+  ]
+}
