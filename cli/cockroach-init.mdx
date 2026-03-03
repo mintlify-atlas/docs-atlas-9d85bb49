@@ -1,0 +1,175 @@
+---
+title: cockroach init
+description: Initialize a CockroachDB cluster after starting nodes
+---
+
+## Overview
+
+The `cockroach init` command performs one-time-only initialization of a CockroachDB cluster. After starting one or more nodes with the `--join` flag, you must run the `init` command on one node to complete cluster setup.
+
+<Note>
+Cluster initialization is required before the cluster can accept SQL connections. This step creates the system databases and establishes the cluster's identity.
+</Note>
+
+## Syntax
+
+```bash
+cockroach init [flags]
+```
+
+## When to Use
+
+Run `cockroach init` when:
+- You've started multiple nodes with the `--join` flag
+- You're setting up a new multi-node cluster
+- The cluster has never been initialized before
+
+<Warning>
+Do **not** run `init` on:
+- Single-node clusters started with `cockroach start-single-node` (automatically initialized)
+- An already-initialized cluster (causes an error)
+- Multiple nodes simultaneously (only run on one node)
+</Warning>
+
+## Common Flags
+
+<ParamField path="--host" type="string" default="localhost:26257">
+  The server host and port to connect to for initialization.
+</ParamField>
+
+<ParamField path="--certs-dir" type="string">
+  Path to the certificate directory for secure clusters. Required if the cluster uses TLS.
+</ParamField>
+
+<ParamField path="--insecure" type="boolean" default="false">
+  Connect to an insecure cluster (no TLS encryption). Use only for development.
+</ParamField>
+
+## Examples
+
+### Initialize an Insecure Cluster
+
+<Steps>
+  <Step title="Start nodes with --join flag">
+    Start each node pointing to the cluster join addresses:
+
+    ```bash
+    # Node 1
+    cockroach start --insecure --store=node1 \
+      --listen-addr=localhost:26257 \
+      --http-addr=localhost:8080 \
+      --join=localhost:26257,localhost:26258,localhost:26259
+
+    # Node 2
+    cockroach start --insecure --store=node2 \
+      --listen-addr=localhost:26258 \
+      --http-addr=localhost:8081 \
+      --join=localhost:26257,localhost:26258,localhost:26259
+
+    # Node 3
+    cockroach start --insecure --store=node3 \
+      --listen-addr=localhost:26259 \
+      --http-addr=localhost:8082 \
+      --join=localhost:26257,localhost:26258,localhost:26259
+    ```
+  </Step>
+
+  <Step title="Initialize the cluster">
+    Run init on any one node:
+
+    ```bash
+    cockroach init --insecure --host=localhost:26257
+    ```
+
+    Expected output:
+    ```
+    Cluster successfully initialized
+    ```
+  </Step>
+
+  <Step title="Verify cluster status">
+    ```bash
+    cockroach node status --insecure --host=localhost:26257
+    ```
+  </Step>
+</Steps>
+
+### Initialize a Secure Cluster
+
+For production deployments with TLS certificates:
+
+```bash
+cockroach init \
+  --certs-dir=/path/to/certs \
+  --host=node1.example.com:26257
+```
+
+<Note>
+The user running `init` must have access to the client certificate (`client.root.crt`) in the certs directory.
+</Note>
+
+### Initialize on Remote Host
+
+```bash
+cockroach init \
+  --certs-dir=/path/to/certs \
+  --host=192.168.1.10:26257
+```
+
+## How It Works
+
+1. **Connection Check**: The `init` command waits for the target node to be ready (health check)
+2. **Bootstrap**: Sends a Bootstrap RPC to create system databases and cluster metadata
+3. **Confirmation**: Returns success message when initialization completes
+
+From the source (`pkg/cli/init.go:68`):
+```go
+c.Bootstrap(ctx, &serverpb.BootstrapRequest{
+    InitType: typ,
+})
+```
+
+## Troubleshooting
+
+<Accordion title="Error: cluster has already been initialized">
+  This means the cluster was previously initialized. You can verify by connecting with `cockroach sql` - if it works, the cluster is initialized.
+
+  **Solution**: No action needed. Connect to the cluster normally.
+</Accordion>
+
+<Accordion title="Error: node not ready to perform cluster initialization">
+  The node hasn't fully started yet or can't be reached.
+
+  **Solutions**:
+  - Wait a few seconds for the node to finish starting
+  - Verify the node is running: `ps aux | grep cockroach`
+  - Check the node logs for startup errors
+  - Verify the `--host` flag matches the node's `--listen-addr`
+</Accordion>
+
+<Accordion title="Connection refused errors">
+  Can't connect to the specified host/port.
+
+  **Solutions**:
+  - Verify the node is running on the specified address
+  - Check firewall rules allow connections on port 26257
+  - For secure clusters, ensure certificates are valid and in the correct location
+</Accordion>
+
+## Best Practices
+
+<Tip>
+**Wait for all nodes**: While you can initialize with just one node running, it's best to start all planned nodes before running `init` to ensure proper replica placement.
+</Tip>
+
+- Run `init` only once per cluster
+- Use the same `--join` list on all nodes
+- For production, always use `--certs-dir` (secure mode)
+- Document which node you ran `init` on for your records
+- Verify cluster status after initialization
+
+## Related Commands
+
+- [cockroach start](/cli/cockroach-start) - Start a CockroachDB node
+- [cockroach node status](/cli/cockroach-node) - Check cluster node status
+- [Cluster Management](/admin/cluster-management) - Managing cluster operations

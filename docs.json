@@ -103,9 +103,12 @@
             "pages": [
               "cli/overview",
               "cli/cockroach-start",
+              "cli/cockroach-init",
               "cli/cockroach-sql",
               "cli/cockroach-node",
-              "cli/cockroach-debug"
+              "cli/cockroach-cert",
+              "cli/cockroach-debug",
+              "cli/cockroach-workload"
             ]
           }
         ]

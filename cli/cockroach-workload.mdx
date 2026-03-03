@@ -1,0 +1,364 @@
+---
+title: cockroach workload
+description: Generate and run workloads for testing and benchmarking CockroachDB
+---
+
+## Overview
+
+The `cockroach workload` command provides built-in workload generators for testing, benchmarking, and demonstrating CockroachDB. These workloads simulate realistic application patterns and are useful for:
+
+- Performance testing and benchmarking
+- Load testing and capacity planning
+- Demonstrating CockroachDB features
+- Developing and testing optimizations
+
+## Available Workloads
+
+CockroachDB includes several built-in workloads based on industry-standard benchmarks and common patterns:
+
+<CardGroup cols={2}>
+  <Card title="Bank" icon="building-columns">
+    Simulates a banking application with account transfers and balance checks. Tests transactional correctness.
+  </Card>
+  <Card title="KV" icon="database">
+    Simple key-value read/write operations. Good for basic throughput testing.
+  </Card>
+  <Card title="TPCC" icon="warehouse">
+    TPC-C benchmark simulating order entry workload. Industry-standard OLTP benchmark.
+  </Card>
+  <Card title="YCSB" icon="chart-line">
+    Yahoo! Cloud Serving Benchmark. Configurable read/write/scan patterns.
+  </Card>
+</CardGroup>
+
+### Other Workloads
+
+- **movr** - Multi-region ride-sharing application
+- **tpch** - TPC-H decision support benchmark (analytics)
+- **kv** - Key-value operations
+- **bulkingest** - Bulk data ingestion patterns
+
+## Basic Commands
+
+### Initialize a Workload
+
+Create the schema and initial data:
+
+```bash
+cockroach workload init <workload-name> [connection-string]
+```
+
+**Example:**
+```bash
+cockroach workload init bank 'postgresql://root@localhost:26257?sslmode=disable'
+```
+
+### Run a Workload
+
+Execute the workload against the database:
+
+```bash
+cockroach workload run <workload-name> [flags] [connection-string]
+```
+
+**Example:**
+```bash
+cockroach workload run bank \
+  --duration=1m \
+  --concurrency=10 \
+  'postgresql://root@localhost:26257?sslmode=disable'
+```
+
+## Common Workload Examples
+
+### Bank Workload
+
+Simulates a banking application with account transfers.
+
+<Tabs>
+  <Tab title="Initialize">
+    ```bash
+    cockroach workload init bank \
+      --rows=1000 \
+      'postgresql://root@localhost:26257/bank?sslmode=disable'
+    ```
+
+    Creates:
+    - `bank` table with 1000 initial accounts
+    - Each account starts with balance of $1000
+  </Tab>
+
+  <Tab title="Run workload">
+    ```bash
+    cockroach workload run bank \
+      --duration=5m \
+      --concurrency=20 \
+      --max-rate=100 \
+      'postgresql://root@localhost:26257/bank?sslmode=disable'
+    ```
+
+    Generates:
+    - Random transfers between accounts
+    - Balance checks
+    - Tests ACID transaction guarantees
+  </Tab>
+
+  <Tab title="Output">
+    ```
+    _elapsed___errors__ops/sec(inst)___ops/sec(cum)__p50(ms)__p95(ms)__p99(ms)_pMax(ms)
+      1.0s        0           95.0           95.0      8.4     14.7     18.9     23.1
+      2.0s        0          102.0           98.5      7.9     13.6     17.8     22.0
+      3.0s        0           98.0           98.3      8.1     14.2     18.4     21.5
+    ```
+  </Tab>
+</Tabs>
+
+### KV Workload
+
+Simple key-value read and write operations.
+
+```bash
+# Initialize with 10,000 keys
+cockroach workload init kv \
+  --splits=10 \
+  --rows=10000 \
+  'postgresql://root@localhost:26257?sslmode=disable'
+
+# Run 50/50 read-write workload
+cockroach workload run kv \
+  --read-percent=50 \
+  --duration=2m \
+  --concurrency=50 \
+  'postgresql://root@localhost:26257?sslmode=disable'
+```
+
+<ParamField path="--read-percent" type="integer" default="0">
+  Percentage of operations that are reads (0-100). Remainder are writes.
+</ParamField>
+
+<ParamField path="--span-percent" type="integer" default="0">
+  Percentage of operations that are spanning reads (scans).
+</ParamField>
+
+<ParamField path="--splits" type="integer" default="0">
+  Number of splits to apply to the table.
+</ParamField>
+
+### TPCC Workload
+
+Industry-standard TPC-C order entry benchmark.
+
+```bash
+# Initialize with 10 warehouses
+cockroach workload init tpcc \
+  --warehouses=10 \
+  'postgresql://root@localhost:26257?sslmode=disable'
+
+# Run benchmark
+cockroach workload run tpcc \
+  --warehouses=10 \
+  --duration=10m \
+  --workers=100 \
+  'postgresql://root@localhost:26257?sslmode=disable'
+```
+
+<Note>
+TPCC is CPU and memory intensive. Each warehouse requires approximately 200MB of data. Start with fewer warehouses for testing.
+</Note>
+
+### YCSB Workload
+
+Configurable benchmark with different workload profiles.
+
+```bash
+# Initialize
+cockroach workload init ycsb \
+  --workload=B \
+  --record-count=100000 \
+  'postgresql://root@localhost:26257?sslmode=disable'
+
+# Run workload
+cockroach workload run ycsb \
+  --workload=B \
+  --duration=5m \
+  --concurrency=50 \
+  'postgresql://root@localhost:26257?sslmode=disable'
+```
+
+YCSB Workload types:
+- **A**: Update heavy (50% reads, 50% updates)
+- **B**: Read mostly (95% reads, 5% updates)
+- **C**: Read only (100% reads)
+- **D**: Read latest (95% reads, 5% inserts)
+- **E**: Scan heavy (95% scans, 5% inserts)
+- **F**: Read-modify-write (50% reads, 50% read-modify-writes)
+
+## Common Flags
+
+<ParamField path="--duration" type="duration" default="0">
+  How long to run the workload (e.g., `1h`, `30m`, `90s`). 0 means run forever.
+</ParamField>
+
+<ParamField path="--concurrency" type="integer" default="1">
+  Number of concurrent workers.
+</ParamField>
+
+<ParamField path="--max-rate" type="integer" default="0">
+  Maximum rate of operations per second. 0 means unlimited.
+</ParamField>
+
+<ParamField path="--ramp" type="duration" default="0s">
+  Ramp-up period before collecting results.
+</ParamField>
+
+<ParamField path="--display-every" type="duration" default="1s">
+  How often to display stats.
+</ParamField>
+
+<ParamField path="--histograms" type="string">
+  Output file for latency histograms.
+</ParamField>
+
+<ParamField path="--tolerate-errors" type="boolean" default="false">
+  Continue running even if errors occur.
+</ParamField>
+
+## Multi-Region Testing
+
+Workloads can test multi-region performance:
+
+```bash
+# Initialize movr workload for multi-region testing
+cockroach workload init movr \
+  --num-users=1000 \
+  --num-vehicles=100 \
+  'postgresql://root@localhost:26257?sslmode=disable'
+
+# Run with locality-aware routing
+cockroach workload run movr \
+  --duration=10m \
+  --local-percent=90 \
+  'postgresql://root@localhost:26257?sslmode=disable'
+```
+
+## Performance Testing Best Practices
+
+<Steps>
+  <Step title="Ramp up gradually">
+    Use `--ramp` to allow the cluster to warm up:
+
+    ```bash
+    cockroach workload run bank \
+      --ramp=1m \
+      --duration=10m \
+      --concurrency=100
+    ```
+  </Step>
+
+  <Step title="Match production patterns">
+    Configure read/write ratios to match your application:
+
+    ```bash
+    cockroach workload run kv \
+      --read-percent=80 \
+      --concurrency=50
+    ```
+  </Step>
+
+  <Step title="Collect detailed metrics">
+    Use `--histograms` to export latency data:
+
+    ```bash
+    cockroach workload run bank \
+      --duration=10m \
+      --histograms=results.json
+    ```
+  </Step>
+
+  <Step title="Monitor cluster during test">
+    Watch cluster metrics in Admin UI:
+    - CPU usage
+    - Disk I/O
+    - Network throughput
+    - Query latency
+  </Step>
+</Steps>
+
+## Output Metrics
+
+Workload output shows:
+
+- **_elapsed**: Time since workload started
+- **_errors**: Cumulative error count
+- **ops/sec(inst)**: Instantaneous operations per second
+- **ops/sec(cum)**: Cumulative average operations per second
+- **p50(ms)**: 50th percentile latency
+- **p95(ms)**: 95th percentile latency
+- **p99(ms)**: 99th percentile latency
+- **pMax(ms)**: Maximum latency
+
+**Example:**
+```
+_elapsed___errors__ops/sec(inst)___ops/sec(cum)__p50(ms)__p95(ms)__p99(ms)_pMax(ms)
+    5.0s        0          523.8          523.8      7.3     12.1     16.8     25.2
+   10.0s        0          518.2          521.0      7.5     12.3     17.0     24.1
+```
+
+## Connection Strings
+
+Workloads support standard PostgreSQL connection strings:
+
+<CodeGroup>
+```bash Insecure
+'postgresql://root@localhost:26257/database?sslmode=disable'
+```
+
+```bash Secure
+'postgresql://root@node1.example.com:26257/database?sslmode=verify-full&sslrootcert=certs/ca.crt&sslcert=certs/client.root.crt&sslkey=certs/client.root.key'
+```
+
+```bash Multiple nodes
+'postgresql://root@node1:26257,node2:26257,node3:26257/database?sslmode=disable'
+```
+</CodeGroup>
+
+## Troubleshooting
+
+<Accordion title="Low throughput / high latency">
+  **Possible causes**:
+  - Insufficient cluster resources
+  - Network bottlenecks
+  - Workload client CPU saturated
+  - Replication lag
+
+  **Solutions**:
+  - Increase concurrency: `--concurrency=100`
+  - Run workload from multiple machines
+  - Add more nodes to cluster
+  - Check cluster CPU and disk utilization
+</Accordion>
+
+<Accordion title="Transaction retry errors">
+  Normal for some workloads (especially bank). CockroachDB uses optimistic concurrency.
+
+  **Solutions**:
+  - Use `--tolerate-errors` to continue despite retries
+  - Reduce contention with `--concurrency`
+  - For bank workload, increase `--rows` to reduce conflicts
+</Accordion>
+
+<Accordion title="Out of memory errors">
+  Workload or cluster running out of memory.
+
+  **Solutions**:
+  - Reduce data size: `--rows=1000` instead of millions
+  - Reduce concurrency
+  - Increase cluster memory
+  - For TPCC, reduce `--warehouses`
+</Accordion>
+
+## Related Documentation
+
+- [Performance Benchmarking](/performance/benchmarking) - Benchmarking methodology
+- [Performance Optimization](/performance/optimization) - Tuning cluster performance
+- [Cluster Configuration](/admin/configuration) - Cluster resource settings

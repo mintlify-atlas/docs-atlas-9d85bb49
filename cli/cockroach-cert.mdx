@@ -1,0 +1,325 @@
+---
+title: cockroach cert
+description: Create and manage TLS certificates for secure CockroachDB clusters
+---
+
+## Overview
+
+The `cockroach cert` command creates and manages TLS certificates and keys for secure CockroachDB deployments. Proper certificate management is essential for production clusters.
+
+<Warning>
+For production deployments, always use secure mode with TLS certificates. Insecure mode should only be used for local development and testing.
+</Warning>
+
+## Commands
+
+### create-ca
+
+Create a Certificate Authority (CA) certificate and key.
+
+```bash
+cockroach cert create-ca \
+  --certs-dir=<path to certs directory> \
+  --ca-key=<path to CA key>
+```
+
+<ParamField path="--certs-dir" type="string" required>
+  Directory where certificates will be stored. Created if it doesn't exist.
+</ParamField>
+
+<ParamField path="--ca-key" type="string" required>
+  Path to the CA private key file (e.g., `my-safe-directory/ca.key`).
+</ParamField>
+
+<ParamField path="--lifetime" type="duration" default="10y">
+  Certificate lifetime. Default is 10 years (87,600 hours).
+</ParamField>
+
+<ParamField path="--key-size" type="integer" default="2048">
+  RSA key size in bits. Common values: 2048, 4096.
+</ParamField>
+
+<ParamField path="--allow-ca-key-reuse" type="boolean" default="false">
+  Reuse existing CA key if it exists.
+</ParamField>
+
+<ParamField path="--overwrite" type="boolean" default="false">
+  Overwrite existing certificates.
+</ParamField>
+
+**Example:**
+```bash
+mkdir -p certs my-safe-directory
+cockroach cert create-ca \
+  --certs-dir=certs \
+  --ca-key=my-safe-directory/ca.key
+```
+
+Generates:
+- `certs/ca.crt` - CA certificate (distribute to all nodes)
+- `my-safe-directory/ca.key` - CA private key (keep secure, needed to sign other certs)
+
+### create-node
+
+Create a node certificate for server-to-server and client-to-server TLS.
+
+```bash
+cockroach cert create-node \
+  --certs-dir=<path to certs> \
+  --ca-key=<path to CA key> \
+  <host1> <host2> ... <hostN>
+```
+
+<ParamField path="hosts" type="string[]" required>
+  List of hostnames and IP addresses the node certificate will be valid for.
+</ParamField>
+
+<Note>
+Include all addresses that clients and other nodes will use to connect: hostnames, IP addresses, and `localhost`.
+</Note>
+
+**Example:**
+```bash
+cockroach cert create-node \
+  --certs-dir=certs \
+  --ca-key=my-safe-directory/ca.key \
+  node1.example.com \
+  192.168.1.10 \
+  localhost \
+  127.0.0.1
+```
+
+Generates:
+- `certs/node.crt` - Node certificate
+- `certs/node.key` - Node private key
+
+### create-client
+
+Create a client certificate for SQL user authentication.
+
+```bash
+cockroach cert create-client \
+  --certs-dir=<path to certs> \
+  --ca-key=<path to CA key> \
+  <username>
+```
+
+<ParamField path="username" type="string" required>
+  SQL username for the certificate (e.g., `root`, `app_user`).
+</ParamField>
+
+**Example - Root user:**
+```bash
+cockroach cert create-client \
+  --certs-dir=certs \
+  --ca-key=my-safe-directory/ca.key \
+  root
+```
+
+Generates:
+- `certs/client.root.crt` - Client certificate for user `root`
+- `certs/client.root.key` - Client private key for user `root`
+
+**Example - Application user:**
+```bash
+cockroach cert create-client \
+  --certs-dir=certs \
+  --ca-key=my-safe-directory/ca.key \
+  app_user
+```
+
+Generates:
+- `certs/client.app_user.crt`
+- `certs/client.app_user.key`
+
+### list
+
+List all certificates in the certs directory.
+
+```bash
+cockroach cert list --certs-dir=<path to certs>
+```
+
+**Example output:**
+```
+Certificate directory: certs
+  ca.crt
+  node.crt
+  client.root.crt
+  client.app_user.crt
+
+Private keys:
+  node.key
+  client.root.key
+  client.app_user.key
+```
+
+## Complete Setup Guide
+
+<Steps>
+  <Step title="Create CA certificate">
+    ```bash
+    mkdir -p certs my-safe-directory
+    cockroach cert create-ca \
+      --certs-dir=certs \
+      --ca-key=my-safe-directory/ca.key
+    ```
+
+    <Tip>
+    Keep `my-safe-directory/ca.key` in a secure location. You'll need it to create additional certificates.
+    </Tip>
+  </Step>
+
+  <Step title="Create node certificate for each server">
+    For each CockroachDB node, create a certificate with all its addresses:
+
+    ```bash
+    # Node 1
+    cockroach cert create-node \
+      --certs-dir=certs \
+      --ca-key=my-safe-directory/ca.key \
+      node1.example.com \
+      192.168.1.10 \
+      localhost \
+      127.0.0.1
+
+    # Node 2
+    cockroach cert create-node \
+      --certs-dir=certs2 \
+      --ca-key=my-safe-directory/ca.key \
+      node2.example.com \
+      192.168.1.11 \
+      localhost \
+      127.0.0.1
+    ```
+  </Step>
+
+  <Step title="Create client certificate for root user">
+    ```bash
+    cockroach cert create-client \
+      --certs-dir=certs \
+      --ca-key=my-safe-directory/ca.key \
+      root
+    ```
+  </Step>
+
+  <Step title="Distribute certificates to nodes">
+    Each node needs:
+    - `ca.crt` (CA certificate)
+    - `node.crt` (node certificate)
+    - `node.key` (node private key)
+
+    Client machines need:
+    - `ca.crt`
+    - `client.<username>.crt`
+    - `client.<username>.key`
+  </Step>
+
+  <Step title="Set proper permissions">
+    ```bash
+    chmod 600 certs/*.key
+    chmod 644 certs/*.crt
+    ```
+  </Step>
+
+  <Step title="Start nodes with certificates">
+    ```bash
+    cockroach start \
+      --certs-dir=certs \
+      --store=/mnt/data \
+      --listen-addr=node1.example.com:26257 \
+      --join=node1:26257,node2:26257,node3:26257
+    ```
+  </Step>
+</Steps>
+
+## Certificate Files Reference
+
+| File | Description | Distribution |
+|------|-------------|-------------|
+| `ca.crt` | Certificate Authority certificate | All nodes and clients |
+| `ca.key` | CA private key (for signing) | Secure storage only, not on nodes |
+| `node.crt` | Node server certificate | Node servers |
+| `node.key` | Node private key | Node servers (same node as node.crt) |
+| `client.root.crt` | Client certificate for `root` user | Admin clients |
+| `client.root.key` | Client private key for `root` | Admin clients |
+| `client.<user>.crt` | Client certificate for SQL user | Application clients |
+| `client.<user>.key` | Client private key | Application clients |
+
+## Certificate Rotation
+
+Certificates expire based on the `--lifetime` parameter (default 5 years for node/client certs). To rotate:
+
+<Steps>
+  <Step title="Create new certificates">
+    ```bash
+    cockroach cert create-node \
+      --certs-dir=new-certs \
+      --ca-key=my-safe-directory/ca.key \
+      node1.example.com 192.168.1.10
+    ```
+  </Step>
+
+  <Step title="Rolling replacement">
+    Replace certificates on nodes one at a time:
+    1. Stop node
+    2. Replace cert files
+    3. Restart node
+    4. Wait for node to rejoin cluster
+    5. Move to next node
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+<Accordion title="Error: x509: certificate signed by unknown authority">
+  The node or client can't verify the certificate chain.
+
+  **Solutions**:
+  - Ensure `ca.crt` is present in `--certs-dir`
+  - Verify all certificates were signed by the same CA
+  - Check that the CA certificate hasn't expired
+</Accordion>
+
+<Accordion title="Error: x509: certificate is valid for X, not Y">
+  Connecting to a hostname not listed in the node certificate.
+
+  **Solution**: Recreate the node certificate including all hostnames and IPs:
+  ```bash
+  cockroach cert create-node \
+    --certs-dir=certs \
+    --ca-key=my-safe-directory/ca.key \
+    --overwrite \
+    hostname1 hostname2 ip-address localhost
+  ```
+</Accordion>
+
+<Accordion title="Permission denied errors">
+  Incorrect file permissions on certificate or key files.
+
+  **Solution**:
+  ```bash
+  chmod 600 certs/*.key
+  chmod 644 certs/*.crt
+  ```
+</Accordion>
+
+## Security Best Practices
+
+<Warning>
+**Protect CA private key**: The `ca.key` file can generate certificates for your cluster. Store it securely, preferably offline or in a hardware security module (HSM).
+</Warning>
+
+- Use strong key sizes (minimum 2048 bits, prefer 4096 for CA)
+- Set appropriate certificate lifetimes (shorter for higher security)
+- Rotate certificates before expiration
+- Use separate client certificates for different applications
+- Never commit private keys (`.key` files) to version control
+- Implement certificate expiration monitoring
+- Consider using separate CAs for client and node certificates
+
+## Related Documentation
+
+- [Security Overview](/operations/security) - Cluster security configuration
+- [Cluster Management](/admin/cluster-management) - Certificate usage in clusters
+- [cockroach start](/cli/cockroach-start) - Starting secure nodes
